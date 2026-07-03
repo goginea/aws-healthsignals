@@ -186,6 +186,7 @@ curl -X POST https://API_ID.execute-api.us-east-1.amazonaws.com/prod/subscribe \
 - 5 public announcement templates (press release, Facebook, school letters)
 - 6 partner notification templates (state escalation, hospital, EMS, pharmacy)
 - 4 follow-up templates (weekly update, feedback request, season wrap-up)
+- 6 subscription lifecycle templates (verification, welcome, unsubscribe, preference update, re-verification, pause)
 
 ## Subscription System
 
@@ -270,7 +271,7 @@ aws-healthsignals/
 ├── bedrock/
 │   ├── prompts/                    # 4 system prompts
 │   ├── guardrails/                 # Denied topics + word filters
-│   └── knowledge_bases/            # Pre-populated (11 docs, 92 KB)
+│   └── knowledge_bases/            # Pre-populated (12 docs, 92 KB)
 │       ├── cdc_guidelines/         # 6 CDC reference documents
 │       └── communication_templates/ # 33 templates (6 categories)
 ├── tests/

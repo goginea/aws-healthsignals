@@ -12,7 +12,9 @@ This directory contains professional communication templates for the **variety r
 | `partner_notification_templates.md` | Inter-agency coordination: state health dept escalation, hospital/clinic notification, EMS advisory, school superintendent letter, LTCF alert, pharmacy supply advisory | 6 templates | 11.3 KB |
 | `follow_up_templates.md` | Ongoing communications: weekly situation update, accuracy feedback request, season wrap-up summary, lessons learned survey | 4 templates | 9.3 KB |
 
-**Total: 27 templates across 5 categories**
+| `subscription_lifecycle.md` | Subscription management: verification email, welcome message, unsubscribe confirmation, preference update confirmation, re-verification notice, pause acknowledgment | 6 templates | 6.1 KB |
+
+**Total: 33 templates across 6 categories**
 
 ## Knowledge Base Configuration
 

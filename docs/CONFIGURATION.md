@@ -18,7 +18,7 @@ HealthSignals is **fully config-driven**. All operational parameters — which s
 | Add a county to monitoring | Edit `config/states/{state}.json` → add to `subscribing_counties` array |
 | Override threshold for one state | Edit `config/states/{state}.json` → `disease_overrides.{disease}.threshold_override` |
 | Change Bedrock model | Edit `config/system.json` → `bedrock.routine_model_id` |
-| Switch from Haiku to Sonnet globally | Edit `config/system.json` → set both model IDs to Sonnet |
+| Change Bedrock models | Edit `config/system.json` → update `routine_model_id` and `high_severity_model_id`, then redeploy |
 | Add a new data source | Create `config/data_sources/{name}.json` + write a new fetcher Lambda |
 | Disable a state temporarily | Set `enabled: false` in that state's config |
 | Change alert delivery channel | Edit county's `delivery_preferences.channels` in state config |

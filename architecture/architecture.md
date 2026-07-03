@@ -66,19 +66,19 @@ Amazon HealthSignals is a **deterministic workflow** (not an autonomous agent) t
 │  │  │ Situation│    │ Severity │    │                      │  │ │
 │  │  │ Brief    │    │ Classify │    │ HIGH/CRITICAL → ─────┼──┼─┤
 │  │  │          │    │          │    │                 │    │  │ │
-│  │  │ [Haiku]  │    │ [Haiku]  │    │ LOW/MOD → ─────┼────┼──┼─┤
+│  │  │ [Sonnet 4.5]  │    │ [Sonnet 4.5]  │    │ LOW/MOD → ─────┼────┼──┼─┤
 │  │  └──────────┘    └──────────┘    └────────────────┘    │  │ │
 │  │                                                         │  │ │
 │  │  ┌──────────────────────┐    ┌──────────────────────┐  │  │ │
 │  │  │ Step 3: Checklist    │    │ Step 3: Checklist    │◀─┘  │ │
-│  │  │ [Sonnet — urgent]    │    │ [Haiku — routine]    │◀────┘ │
+│  │  │ [Sonnet 5 — urgent]    │    │ [Sonnet 4.5 — routine]    │◀────┘ │
 │  │  └──────────┬───────────┘    └──────────┬───────────┘       │
 │  │             │                           │                    │
 │  │             └─────────┬─────────────────┘                    │
 │  │                       ▼                                      │
 │  │  ┌──────────────────────────────────────┐                   │
 │  │  │ Step 4: Communication Drafting       │                   │
-│  │  │ [Model matches Step 3 routing]       │                   │
+│  │  │ [Sonnet 4.5 — always]       │                   │
 │  │  │ Output: email_body + sms_summary     │                   │
 │  │  └──────────────────────────────────────┘                   │
 │  │                                                              │
@@ -88,7 +88,7 @@ Amazon HealthSignals is a **deterministic workflow** (not an autonomous agent) t
 │  ┌───────────────────┐  ┌─────────────────────────────────────┐ │
 │  │ Bedrock Guardrails │  │ Knowledge Bases                     │ │
 │  │ • No clinical Rx   │  │ • CDC Guidelines (precision, 6 docs)│ │
-│  │ • No diagnoses     │  │ • Comms Templates (variety, 27 tmpl)│ │
+│  │ • No diagnoses     │  │ • Comms Templates (variety, 33 tmpl)│ │
 │  │ • No quarantine    │  │                                     │ │
 │  └───────────────────┘  └─────────────────────────────────────┘ │
 └─────────────────────────────────────────────────────────────────┘
@@ -130,7 +130,7 @@ Amazon HealthSignals is a **deterministic workflow** (not an autonomous agent) t
 | Cost control | Unpredictable (agent may loop) | Fixed 4 calls per alert |
 | Observability | Opaque agent reasoning | X-Ray traces each step |
 | Error handling | Agent retry logic | Explicit Catch/Retry states |
-| Model routing | Single model | Haiku steps 1-2, Sonnet steps 3-4 (conditional) |
+| Model routing | Single model | Sonnet 4.5 all steps, Sonnet 5 for HIGH/CRIT checklist (conditional) |
 
 **Decision:** Our workflow is deterministic — we always do exactly 4 steps in order. There's no "decide what to do next" logic. Step Functions gives us explicit control over model routing, cost, and observability.
 
@@ -138,8 +138,8 @@ Amazon HealthSignals is a **deterministic workflow** (not an autonomous agent) t
 
 | KB | Content | Retrieval Strategy | Reason |
 |----|---------|-------------------|--------|
-| CDC Guidelines | 6 official guidance docs (44 KB) | Precision (Top-3, high threshold) | Need exact, authoritative facts |
-| Comms Templates | 27 writing templates (44 KB) | Variety (Top-8, MMR diversity) | Need diverse stylistic input |
+| CDC Guidelines | 6 official guidance docs (43 KB) | Precision (Top-3, high threshold) | Need exact, authoritative facts |
+| Comms Templates | 33 writing templates (49 KB) | Variety (Top-8, MMR diversity) | Need diverse stylistic input |
 
 ### Why Dynamic Data In-Context (Not in KB)?
 
@@ -176,22 +176,25 @@ Step 4 (Communication):       ~2,500 input + 1,500 output = 4,000 tokens
 TOTAL per county per alert:                                ~11,200 tokens
 ```
 
-At Claude 3 Haiku pricing ($0.25/$1.25 per MTok input/output):
-- Per alert: ~$0.003 (three-tenths of a cent)
-- 100 counties × 4 alerts/season: ~$1.20 in Bedrock costs
-- Monthly amortized: $0.27–$0.52 per county
+At Claude Sonnet 4.5 pricing (~$3.00/$15.00 per MTok input/output):
+- Per alert cycle: ~$0.08 (7,200 input × $3/MTok + 4,000 output × $15/MTok)
+- 100 counties × 4 alerts/season: ~$32 in Bedrock costs
+- Monthly (100 counties, active monitoring): $184–$358
+- Monthly amortized: $1.84–$3.58 per county
 
 ### Model Routing Logic
 
 ```
 IF severity == HIGH or CRITICAL:
-    Steps 3-4 use Claude 3.5 Sonnet ($3/$15 per MTok)
-    → More thorough checklist, better communication quality
+    Step 3 uses Claude Sonnet 5 (us.anthropic.claude-sonnet-5)
+    → More thorough checklist for urgent situations
     → ~10-15% of alerts (2-3 per season per county)
 ELSE:
-    Steps 3-4 use Claude 3 Haiku ($0.25/$1.25 per MTok)  
-    → Adequate for routine LOW/MODERATE alerts
+    Step 3 uses Claude Sonnet 4.5 (us.anthropic.claude-sonnet-4-5-20250929-v1:0)
+    → Fast, adequate for routine LOW/MODERATE alerts
     → ~85-90% of alerts
+
+Steps 1, 2, 4 always use Sonnet 4.5 regardless of severity.
 ```
 
 ## Data Flow (Weekly Cycle)

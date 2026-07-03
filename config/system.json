@@ -16,8 +16,8 @@
     "pipeline_runs": "healthsignals-pipeline-runs"
   },
   "bedrock": {
-    "routine_model_id": "anthropic.claude-3-haiku-20240307-v1:0",
-    "high_severity_model_id": "anthropic.claude-3-5-sonnet-20241022-v2:0",
+    "routine_model_id": "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+    "high_severity_model_id": "us.anthropic.claude-sonnet-5",
     "severity_threshold_for_upgrade": [
       "HIGH",
       "CRITICAL"

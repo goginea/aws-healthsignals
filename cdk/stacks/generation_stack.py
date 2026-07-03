@@ -28,7 +28,7 @@ class GenerationStack(Stack):
             description="Allows Step Functions to invoke Bedrock models",
         )
 
-        # Grant InvokeModel for Haiku and Sonnet
+        # Grant InvokeModel for Sonnet 4.5 and Sonnet 5
         self.bedrock_role.add_to_policy(
             iam.PolicyStatement(
                 actions=["bedrock:InvokeModel"],
