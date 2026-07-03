@@ -1,0 +1,12 @@
+{
+  "_deprecated": true,
+  "_message": "This file is superseded by config/states/*.json — each state config contains its own sentinel_metros section. Kept for backward compatibility with tests.",
+  "_migration": "See config/states/texas.json → sentinel_metros for the current Texas metro definitions.",
+
+  "sentinel_metros": {
+    "26420": {"name": "Houston-The Woodlands-Sugar Land", "short_name": "Houston"},
+    "19100": {"name": "Dallas-Fort Worth-Arlington", "short_name": "DFW"},
+    "12420": {"name": "Austin-Round Rock-Georgetown", "short_name": "Austin"},
+    "41700": {"name": "San Antonio-New Braunfels", "short_name": "San Antonio"}
+  }
+}

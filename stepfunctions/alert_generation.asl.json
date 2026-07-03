@@ -1,0 +1,265 @@
+{
+  "Comment": "Amazon HealthSignals — 4-Step Alert Generation Workflow. Orchestrates Bedrock InvokeModel calls with model routing (Haiku for routine, Sonnet for high-severity).",
+  "StartAt": "SituationBrief",
+  "States": {
+    "SituationBrief": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::bedrock:invokeModel",
+      "Parameters": {
+        "ModelId": "anthropic.claude-3-haiku-20240307-v1:0",
+        "ContentType": "application/json",
+        "Accept": "application/json",
+        "Body": {
+          "anthropic_version": "bedrock-2023-05-31",
+          "max_tokens": 1500,
+          "system": "You are a public health surveillance analyst generating situation briefs for rural health departments. You summarize metropolitan disease signals into clear, actionable intelligence. Never provide clinical recommendations or diagnoses. Always include confidence levels. Frame predictions as 'historical patterns suggest' not 'will happen'.",
+          "messages": [
+            {
+              "role": "user",
+              "content.$": "States.Format('Generate a situation brief for {} regarding {}. Leader metro: {} crossed threshold at {}% ED visits (week {}). Historical lag to this county: {} weeks. Severity multiplier from past seasons: {}×. Number of calibration seasons: {}. Current CDC activity level for state: {}.', $.county_name, $.disease, $.leader_metro_name, $.leader_value, $.detection_week, $.lag_weeks, $.severity_multiplier, $.seasons_calibrated, $.cdc_activity_level)"
+            }
+          ]
+        }
+      },
+      "ResultPath": "$.situation_brief_result",
+      "Retry": [
+        {
+          "ErrorEquals": ["Bedrock.ThrottlingException"],
+          "IntervalSeconds": 5,
+          "MaxAttempts": 3,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
+          "Next": "GenerationFailed"
+        }
+      ],
+      "Next": "SeverityClassification"
+    },
+
+    "SeverityClassification": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::bedrock:invokeModel",
+      "Parameters": {
+        "ModelId": "anthropic.claude-3-haiku-20240307-v1:0",
+        "ContentType": "application/json",
+        "Accept": "application/json",
+        "Body": {
+          "anthropic_version": "bedrock-2023-05-31",
+          "max_tokens": 500,
+          "system": "You are a severity classification engine for disease surveillance alerts. Classify the alert into exactly one category: LOW, MODERATE, HIGH, or CRITICAL. Respond with ONLY a JSON object: {\"severity\": \"...\", \"reasoning\": \"...\", \"confidence\": 0.0-1.0}. Classification criteria: LOW = signal detected but below historical average, no action needed. MODERATE = signal at or above historical average, preparation recommended. HIGH = signal significantly above average OR accelerating trend, urgent preparation. CRITICAL = unprecedented signal level OR multiple metros affected simultaneously.",
+          "messages": [
+            {
+              "role": "user",
+              "content.$": "States.Format('Classify severity for this alert. Situation brief: {}. Leader value: {}%. Historical severity multiplier: {}×. Seasons of calibration data: {}. Confidence in prediction: {}.', $.situation_brief_result.Body.content[0].text, $.leader_value, $.severity_multiplier, $.seasons_calibrated, $.confidence)"
+            }
+          ]
+        }
+      },
+      "ResultPath": "$.severity_result",
+      "Retry": [
+        {
+          "ErrorEquals": ["Bedrock.ThrottlingException"],
+          "IntervalSeconds": 5,
+          "MaxAttempts": 3,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
+          "Next": "GenerationFailed"
+        }
+      ],
+      "Next": "ModelRoutingChoice"
+    },
+
+    "ModelRoutingChoice": {
+      "Type": "Choice",
+      "Comment": "Route to Sonnet for HIGH/CRITICAL severity, stay with Haiku for LOW/MODERATE",
+      "Choices": [
+        {
+          "Or": [
+            {
+              "Variable": "$.severity_result.Body.content[0].text",
+              "StringMatches": "*HIGH*"
+            },
+            {
+              "Variable": "$.severity_result.Body.content[0].text",
+              "StringMatches": "*CRITICAL*"
+            }
+          ],
+          "Next": "PreparationChecklistSonnet"
+        }
+      ],
+      "Default": "PreparationChecklistHaiku"
+    },
+
+    "PreparationChecklistHaiku": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::bedrock:invokeModel",
+      "Parameters": {
+        "ModelId": "anthropic.claude-3-haiku-20240307-v1:0",
+        "ContentType": "application/json",
+        "Accept": "application/json",
+        "Body": {
+          "anthropic_version": "bedrock-2023-05-31",
+          "max_tokens": 2000,
+          "system": "You generate preparation checklists for rural health departments based on disease surveillance alerts. Your checklists must be: (1) Actionable with specific quantities/timelines, (2) Appropriate for departments with <5 staff and limited budgets, (3) Ordered by priority and deadline, (4) Include estimated costs where relevant. Never recommend clinical treatments. Focus on: staffing, supplies ordering, communication plans, partner coordination, facility preparation. Reference CDC guidelines where applicable.",
+          "messages": [
+            {
+              "role": "user",
+              "content.$": "States.Format('Generate a preparation checklist for {}. Disease: {}. Severity: {}. Expected arrival: {} weeks from now. Situation: {}. County population: rural (<50K). Available preparation time: {} weeks.', $.county_name, $.disease, $.severity_result.Body.content[0].text, $.lag_weeks, $.situation_brief_result.Body.content[0].text, $.warning_window_weeks)"
+            }
+          ]
+        }
+      },
+      "ResultPath": "$.checklist_result",
+      "Retry": [
+        {
+          "ErrorEquals": ["Bedrock.ThrottlingException"],
+          "IntervalSeconds": 5,
+          "MaxAttempts": 3,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
+          "Next": "GenerationFailed"
+        }
+      ],
+      "Next": "CommunicationDrafting"
+    },
+
+    "PreparationChecklistSonnet": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::bedrock:invokeModel",
+      "Parameters": {
+        "ModelId": "anthropic.claude-3-5-sonnet-20241022-v2:0",
+        "ContentType": "application/json",
+        "Accept": "application/json",
+        "Body": {
+          "anthropic_version": "bedrock-2023-05-31",
+          "max_tokens": 3000,
+          "system": "You generate URGENT preparation checklists for rural health departments facing HIGH or CRITICAL severity disease alerts. This is a time-critical situation. Your checklists must be: (1) Immediately actionable — what to do TODAY, THIS WEEK, BEFORE ARRIVAL, (2) Include escalation paths (state health dept, mutual aid, FEMA contacts), (3) Specific resource quantities based on county population, (4) Include communication templates for public announcements, (5) Reference CDC emergency response guidelines. Be thorough — this is the only preparation guidance they'll receive. Never recommend clinical treatments or diagnoses.",
+          "messages": [
+            {
+              "role": "user",
+              "content.$": "States.Format('URGENT: Generate a comprehensive preparation checklist for {}. Disease: {}. Severity: HIGH/CRITICAL. Expected arrival: {} weeks from now. Situation: {}. This is a high-severity alert requiring immediate action. County population: rural (<50K). Available preparation time: {} weeks.', $.county_name, $.disease, $.lag_weeks, $.situation_brief_result.Body.content[0].text, $.warning_window_weeks)"
+            }
+          ]
+        }
+      },
+      "ResultPath": "$.checklist_result",
+      "Retry": [
+        {
+          "ErrorEquals": ["Bedrock.ThrottlingException"],
+          "IntervalSeconds": 10,
+          "MaxAttempts": 3,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
+          "Next": "GenerationFailed"
+        }
+      ],
+      "Next": "CommunicationDrafting"
+    },
+
+    "CommunicationDrafting": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::bedrock:invokeModel",
+      "Parameters": {
+        "ModelId.$": "States.ArrayGetItem(States.StringSplit($.severity_result.Body.content[0].text, '\"'), 3)",
+        "ContentType": "application/json",
+        "Accept": "application/json",
+        "Body": {
+          "anthropic_version": "bedrock-2023-05-31",
+          "max_tokens": 2000,
+          "system": "You draft communications for rural health officers to send to their communities and partners. Generate TWO outputs: (1) An EMAIL brief (500-800 words) with situation summary, preparation checklist, and confidence disclaimer, (2) An SMS alert (≤160 characters) that conveys urgency without causing panic. Tone: professional, calm, actionable. Never use alarmist language. Always include the disclaimer: 'This alert is based on historical pattern analysis, not clinical diagnosis. Confidence: [X]%. Use professional judgment for resource decisions.'",
+          "messages": [
+            {
+              "role": "user",
+              "content.$": "States.Format('Draft alert communications for {}. Disease: {}. Severity: {}. Situation brief: {}. Preparation checklist: {}. Confidence: {}%. Warning window: {} weeks. Generate both EMAIL and SMS formats.', $.county_name, $.disease, $.severity_result.Body.content[0].text, $.situation_brief_result.Body.content[0].text, $.checklist_result.Body.content[0].text, $.confidence_pct, $.warning_window_weeks)"
+            }
+          ]
+        }
+      },
+      "ResultPath": "$.communication_result",
+      "Retry": [
+        {
+          "ErrorEquals": ["Bedrock.ThrottlingException"],
+          "IntervalSeconds": 5,
+          "MaxAttempts": 3,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
+          "Next": "GenerationFailed"
+        }
+      ],
+      "Next": "DispatchAlerts"
+    },
+
+    "DispatchAlerts": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "healthsignals-alert-dispatcher",
+        "Payload": {
+          "county_fips.$": "$.county_fips",
+          "county_name.$": "$.county_name",
+          "disease.$": "$.disease",
+          "severity.$": "$.severity_result.Body.content[0].text",
+          "generated_content": {
+            "situation_brief.$": "$.situation_brief_result.Body.content[0].text",
+            "severity_classification.$": "$.severity_result.Body.content[0].text",
+            "preparation_checklist.$": "$.checklist_result.Body.content[0].text",
+            "communication.$": "$.communication_result.Body.content[0].text"
+          },
+          "alert_contacts.$": "$.alert_contacts"
+        }
+      },
+      "ResultPath": "$.delivery_result",
+      "Retry": [
+        {
+          "ErrorEquals": ["Lambda.ServiceException", "Lambda.TooManyRequestsException"],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
+          "Next": "GenerationFailed"
+        }
+      ],
+      "Next": "AlertSucceeded"
+    },
+
+    "AlertSucceeded": {
+      "Type": "Succeed",
+      "Comment": "Alert generated and dispatched successfully"
+    },
+
+    "GenerationFailed": {
+      "Type": "Fail",
+      "Cause": "Alert generation pipeline failed",
+      "Error": "GenerationError"
+    }
+  }
+}

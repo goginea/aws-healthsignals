@@ -1,0 +1,71 @@
+{
+  "_instructions": "Copy this file to {disease_key}.json. Fill in all REPLACE fields. Upload to S3 config bucket to activate monitoring for this disease.",
+
+  "disease_key": "REPLACE_lowercase_disease_key",
+  "display_name": "REPLACE Full Disease Name",
+  "icd10_codes": ["REPLACE"],
+  "enabled": false,
+
+  "detection": {
+    "threshold_pct_ed_visits": 0.0,
+    "require_rising_trend": true,
+    "min_consecutive_weeks_above": 1,
+    "notes": "REPLACE: What % of ED visits indicates an outbreak is beginning?"
+  },
+
+  "data_sources": {
+    "delphi": {
+      "data_source": "REPLACE_or_null_if_not_available",
+      "signal": "REPLACE_signal_name",
+      "smoothed_signal": "REPLACE_smoothed_signal_name"
+    },
+    "cdc_wastewater": {
+      "socrata_dataset_id": "REPLACE_4x4_socrata_id_or_null",
+      "dataset_name": "REPLACE dataset name on data.cdc.gov"
+    },
+    "cdc_nssp": {
+      "pathogen_name": "REPLACE_exact_pathogen_name_in_NSSP_data"
+    }
+  },
+
+  "_data_sources_notes": [
+    "delphi: Check https://cmu-delphi.github.io/delphi-epidata/api/covidcast-signals/nssp.html for available signals",
+    "cdc_wastewater: Check https://data.cdc.gov — search for 'wastewater' + your disease name",
+    "cdc_nssp: The pathogen_name must exactly match the 'pathogen' field in dataset rdmq-nq56",
+    "Set any unavailable source to null — the system will skip it gracefully"
+  ],
+
+  "seasonality": {
+    "typical_season_start_week": null,
+    "typical_season_end_week": null,
+    "peak_month_range": ["REPLACE"],
+    "notes": "REPLACE: When does this disease typically peak? Use null for non-seasonal diseases."
+  },
+
+  "severity_classification": {
+    "LOW": {"description": "REPLACE", "pct_range": [0.0, 0.0], "action": "REPLACE"},
+    "MODERATE": {"description": "REPLACE", "pct_range": [0.0, 0.0], "action": "REPLACE"},
+    "HIGH": {"description": "REPLACE", "pct_range": [0.0, 0.0], "action": "REPLACE"},
+    "CRITICAL": {"description": "REPLACE", "pct_range": [0.0, null], "action": "REPLACE"}
+  },
+
+  "prediction": {
+    "average_warning_window_weeks": 0.0,
+    "typical_lag_range_weeks": [0, 0],
+    "severity_multiplier_typical_range": [1.0, 1.0],
+    "confidence_degrades_after_seasons": 2,
+    "notes": "REPLACE: How many weeks warning does this disease typically provide? How does severity propagate?"
+  },
+
+  "_prediction_notes": [
+    "You need at least 2 complete seasons of historical data to calibrate predictions.",
+    "Run scripts/seed_calibration_data.py after adding a new disease to backfill DynamoDB.",
+    "If the disease doesn't follow metro→rural geographic propagation, this system may not be appropriate."
+  ],
+
+  "prompt_hints": {
+    "preparation_focus": ["REPLACE with 3-5 preparation actions specific to this disease"],
+    "contraindications": ["REPLACE with things the AI should NEVER recommend"],
+    "seasonal_context": "REPLACE with helpful context for alert generation"
+  }
+}

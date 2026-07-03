@@ -1,0 +1,143 @@
+{
+  "state_key": "texas",
+  "state_name": "Texas",
+  "state_abbreviation": "TX",
+  "cdc_geography_name": "Texas",
+  "enabled": true,
+
+  "sentinel_metros": {
+    "26420": {
+      "name": "Houston-The Woodlands-Sugar Land",
+      "short_name": "Houston",
+      "msa_fips": "26420",
+      "county_fips": [
+        "48201", "48157", "48339", "48039", "48167", "48071", "48291", "48473"
+      ],
+      "county_names": [
+        "Harris", "Fort Bend", "Montgomery", "Brazoria", "Galveston", "Chambers", "Liberty", "Waller"
+      ],
+      "notes": "Leads flu most seasons. Peaked Dec 23, 2024 at 6.64% ED visits."
+    },
+    "19100": {
+      "name": "Dallas-Fort Worth-Arlington",
+      "short_name": "DFW",
+      "msa_fips": "19100",
+      "county_fips": [
+        "48113", "48439", "48085", "48121", "48257", "48139", "48231", "48367", "48397", "48251"
+      ],
+      "county_names": [
+        "Dallas", "Tarrant", "Collin", "Denton", "Kaufman", "Ellis", "Hunt", "Parker", "Rockwall", "Johnson"
+      ],
+      "notes": "Peaks LAST but HARDEST. DFW amplification effect (2.3× Houston in 2024-25). Peaked Jan 27, 2025 at 15.40%."
+    },
+    "12420": {
+      "name": "Austin-Round Rock-Georgetown",
+      "short_name": "Austin",
+      "msa_fips": "12420",
+      "county_fips": [
+        "48453", "48491", "48209", "48021", "48055"
+      ],
+      "county_names": [
+        "Travis", "Williamson", "Hays", "Bastrop", "Caldwell"
+      ],
+      "notes": "Leads COVID in some seasons."
+    },
+    "41700": {
+      "name": "San Antonio-New Braunfels",
+      "short_name": "San Antonio",
+      "msa_fips": "41700",
+      "county_fips": [
+        "48029", "48091", "48187", "48259", "48325", "48493"
+      ],
+      "county_names": [
+        "Bexar", "Comal", "Guadalupe", "Kendall", "Medina", "Wilson"
+      ],
+      "notes": "Leads RSV in some seasons."
+    }
+  },
+
+  "subscribing_counties": [
+    {
+      "county_fips": "48143",
+      "county_name": "Erath County",
+      "population": 42000,
+      "primary_metro_affinity": "19100",
+      "secondary_metro_affinity": "26420",
+      "affinity_weights": {"19100": 0.75, "26420": 0.25},
+      "contacts": {
+        "health_officer": {
+          "name": "Sample Health Officer",
+          "email": "health@erath.tx.example.com",
+          "phone": "+15551234567",
+          "preferred_channel": "sms"
+        }
+      },
+      "delivery_preferences": {
+        "channels": ["sms", "email"],
+        "alert_threshold": "MODERATE",
+        "quiet_hours": {"start": "22:00", "end": "06:00", "timezone": "America/Chicago"}
+      }
+    },
+    {
+      "county_fips": "48049",
+      "county_name": "Brown County",
+      "population": 38000,
+      "primary_metro_affinity": "19100",
+      "secondary_metro_affinity": "41700",
+      "affinity_weights": {"19100": 0.60, "41700": 0.40},
+      "contacts": {
+        "health_officer": {
+          "name": "Sample Health Officer",
+          "email": "health@brown.tx.example.com",
+          "phone": "+15559876543",
+          "preferred_channel": "email"
+        }
+      },
+      "delivery_preferences": {
+        "channels": ["email"],
+        "alert_threshold": "MODERATE",
+        "quiet_hours": {"start": "22:00", "end": "06:00", "timezone": "America/Chicago"}
+      }
+    },
+    {
+      "county_fips": "48093",
+      "county_name": "Comanche County",
+      "population": 13500,
+      "primary_metro_affinity": "19100",
+      "secondary_metro_affinity": "12420",
+      "affinity_weights": {"19100": 0.65, "12420": 0.35},
+      "contacts": {
+        "health_officer": {
+          "name": "Sample Health Officer",
+          "email": "health@comanche.tx.example.com",
+          "phone": "+15555551234",
+          "preferred_channel": "sms"
+        }
+      },
+      "delivery_preferences": {
+        "channels": ["sms", "email"],
+        "alert_threshold": "LOW",
+        "quiet_hours": {"start": "21:00", "end": "07:00", "timezone": "America/Chicago"}
+      }
+    }
+  ],
+
+  "disease_overrides": {
+    "_comment": "Per-state threshold overrides. If not specified, uses disease config defaults.",
+    "influenza": {
+      "threshold_override": null,
+      "leading_metro_historical": "26420",
+      "notes": "Houston leads flu most TX seasons"
+    },
+    "rsv": {
+      "threshold_override": null,
+      "leading_metro_historical": "41700",
+      "notes": "San Antonio leads RSV in some seasons"
+    },
+    "covid": {
+      "threshold_override": null,
+      "leading_metro_historical": "12420",
+      "notes": "Austin leads COVID in some seasons"
+    }
+  }
+}

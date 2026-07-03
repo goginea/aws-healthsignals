@@ -1,0 +1,53 @@
+{
+  "source_name": "cdc_nssp",
+  "display_name": "CDC NSSP ED Visit Proportions",
+  "description": "State-level emergency department visit percentages from National Syndromic Surveillance Program",
+  "enabled": true,
+  "priority": "supplemental",
+
+  "api": {
+    "base_url": "https://data.cdc.gov/resource",
+    "dataset_id": "rdmq-nq56",
+    "auth_type": "socrata_app_token",
+    "app_token_env_var": "CDC_SOCRATA_APP_TOKEN",
+    "rate_limit_per_hour_unauthenticated": 1000,
+    "rate_limit_per_hour_authenticated": 40000,
+    "timeout_seconds": 30,
+    "max_records_per_query": 1000
+  },
+
+  "query_defaults": {
+    "lookback_days": 60,
+    "order_by": "week_end DESC",
+    "geography_field": "geography",
+    "pathogen_field": "pathogen",
+    "visit_type_filter": "ed",
+    "always_include_geographies": ["National"]
+  },
+
+  "key_fields": {
+    "geography": "geography",
+    "pathogen": "pathogen",
+    "week_end": "week_end",
+    "percent": "percent",
+    "visit_type": "visit_type"
+  },
+
+  "activity_level_thresholds": {
+    "_comment": "Simplified thresholds for deriving activity level from % ED visits. CDC uses historical percentiles; these are approximations.",
+    "Influenza": {"low": 1.0, "moderate": 2.5, "high": 5.0, "very_high": 8.0},
+    "COVID-19": {"low": 0.5, "moderate": 1.5, "high": 3.0, "very_high": 5.0},
+    "RSV": {"low": 0.5, "moderate": 1.5, "high": 3.0, "very_high": 5.0}
+  },
+
+  "s3_storage": {
+    "prefix_pattern": "raw/cdc_nssp/{year}/W{week}/respiratory_activity.json"
+  },
+
+  "notes": {
+    "sla": "CDC-operated, high reliability",
+    "update_frequency": "Weekly on Fridays",
+    "relationship_to_delphi": "Same underlying NSSP data but state-level only (not MSA). Used for state context and as Delphi API redundancy.",
+    "validated": "2026-07-02"
+  }
+}

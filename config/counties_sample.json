@@ -1,0 +1,5 @@
+{
+  "_deprecated": true,
+  "_message": "This file is superseded by config/states/*.json → subscribing_counties array. Each state config contains its own county list with contacts and delivery preferences. Kept for backward compatibility with tests.",
+  "_migration": "See config/states/texas.json → subscribing_counties"
+}

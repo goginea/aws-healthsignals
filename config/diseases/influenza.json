@@ -1,0 +1,72 @@
+{
+  "disease_key": "influenza",
+  "display_name": "Influenza (Flu)",
+  "icd10_codes": ["J09", "J10", "J11"],
+  "enabled": true,
+
+  "detection": {
+    "threshold_pct_ed_visits": 1.0,
+    "require_rising_trend": true,
+    "min_consecutive_weeks_above": 1,
+    "notes": "1.0% ED visits while rising = outbreak beginning. Based on CDC FluSight historical baselines."
+  },
+
+  "data_sources": {
+    "delphi": {
+      "data_source": "nssp",
+      "signal": "pct_ed_visits_influenza",
+      "smoothed_signal": "smoothed_pct_ed_visits_influenza"
+    },
+    "cdc_wastewater": {
+      "socrata_dataset_id": "ymmh-divb",
+      "dataset_name": "CDC Wastewater Data for Influenza A"
+    },
+    "cdc_nssp": {
+      "pathogen_name": "Influenza"
+    }
+  },
+
+  "seasonality": {
+    "typical_season_start_week": 40,
+    "typical_season_end_week": 20,
+    "peak_month_range": ["December", "February"],
+    "notes": "Respiratory season runs Oct (week 40) through May (week 20)"
+  },
+
+  "severity_classification": {
+    "LOW": {
+      "description": "Signal detected but below historical average",
+      "pct_range": [1.0, 3.0],
+      "action": "Monitor, no alert needed"
+    },
+    "MODERATE": {
+      "description": "At or above historical average",
+      "pct_range": [3.0, 6.0],
+      "action": "Preparation recommended"
+    },
+    "HIGH": {
+      "description": "Significantly above average or accelerating",
+      "pct_range": [6.0, 12.0],
+      "action": "Urgent preparation"
+    },
+    "CRITICAL": {
+      "description": "Unprecedented level or multiple metros simultaneously",
+      "pct_range": [12.0, null],
+      "action": "Emergency response activation"
+    }
+  },
+
+  "prediction": {
+    "average_warning_window_weeks": 4.7,
+    "typical_lag_range_weeks": [3, 7],
+    "severity_multiplier_typical_range": [1.5, 4.5],
+    "confidence_degrades_after_seasons": 2,
+    "notes": "DFW amplification effect observed: 2.3× Houston's peak in 2024-25 season"
+  },
+
+  "prompt_hints": {
+    "preparation_focus": ["Tamiflu supply ordering", "vaccination push", "staffing plans", "clinical protocol review"],
+    "contraindications": ["Do NOT recommend specific antivirals by name", "Do NOT provide dosing"],
+    "seasonal_context": "Flu season peaks Dec-Feb. Vaccination most effective if administered Oct-Nov."
+  }
+}

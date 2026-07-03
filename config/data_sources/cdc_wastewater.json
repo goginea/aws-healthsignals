@@ -1,0 +1,52 @@
+{
+  "source_name": "cdc_wastewater",
+  "display_name": "CDC NWSS Wastewater Surveillance",
+  "description": "Wastewater viral activity data from CDC National Wastewater Surveillance System via Socrata API",
+  "enabled": true,
+  "priority": "supplemental",
+
+  "api": {
+    "base_url": "https://data.cdc.gov/resource",
+    "auth_type": "socrata_app_token",
+    "app_token_env_var": "CDC_SOCRATA_APP_TOKEN",
+    "rate_limit_per_hour_unauthenticated": 1000,
+    "rate_limit_per_hour_authenticated": 40000,
+    "timeout_seconds": 30,
+    "pagination_limit": 10000,
+    "max_records": 100000
+  },
+
+  "query_defaults": {
+    "lookback_days": 30,
+    "order_by": "date_end DESC",
+    "state_field": "wwtp_jurisdiction",
+    "date_field": "date_end",
+    "county_fips_field": "county_fips"
+  },
+
+  "key_fields": {
+    "signal_value": "ptc_15d",
+    "detection_proportion": "detect_prop_15d",
+    "activity_level": "activity_level",
+    "percentile": "percentile",
+    "population": "population_served",
+    "county_fips": "county_fips",
+    "county_names": "county_names",
+    "plant_id": "wwtp_id",
+    "date_start": "date_start",
+    "date_end": "date_end"
+  },
+
+  "s3_storage": {
+    "prefix_pattern": "raw/cdc_wastewater/{disease}/{year}/W{week}/data.json"
+  },
+
+  "notes": {
+    "sla": "CDC-operated, high reliability",
+    "update_frequency": "Weekly on Fridays",
+    "coverage": "~1,500 sampling sites nationwide",
+    "early_signal": "Viral RNA appears in wastewater 4-6 days before clinical cases increase",
+    "limitation": "Not all counties have wastewater sampling sites",
+    "validated": "2026-07-02"
+  }
+}

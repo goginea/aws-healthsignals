@@ -1,0 +1,70 @@
+{
+  "_instructions": "Copy this file to {state_name_lowercase}.json and fill in all fields. Upload to S3 config bucket to activate monitoring for this state.",
+
+  "state_key": "REPLACE_lowercase_state_name",
+  "state_name": "REPLACE Full State Name",
+  "state_abbreviation": "REPLACE_XX",
+  "cdc_geography_name": "REPLACE Full State Name (must match CDC NSSP geography field exactly)",
+  "enabled": false,
+
+  "sentinel_metros": {
+    "REPLACE_MSA_FIPS": {
+      "name": "REPLACE Full MSA Name (e.g., 'Phoenix-Mesa-Chandler')",
+      "short_name": "REPLACE Short Name (e.g., 'Phoenix')",
+      "msa_fips": "REPLACE_MSA_FIPS",
+      "county_fips": [
+        "REPLACE_5_digit_FIPS_1",
+        "REPLACE_5_digit_FIPS_2"
+      ],
+      "county_names": [
+        "REPLACE County Name 1",
+        "REPLACE County Name 2"
+      ],
+      "notes": "REPLACE with any relevant notes about this metro's disease behavior"
+    }
+  },
+
+  "_sentinel_metros_notes": [
+    "Include 2-4 major metros that serve as sentinel hubs for the state.",
+    "Ideal metros: large population, strong healthcare infrastructure, upstream of rural areas.",
+    "MSA FIPS codes: https://www.census.gov/programs-surveys/metro-micro.html",
+    "County FIPS: https://www.census.gov/library/reference/code-lists/ansi.html",
+    "For states without dominant metros (MT, WY, VT), consider using neighboring state metros."
+  ],
+
+  "subscribing_counties": [
+    {
+      "county_fips": "REPLACE_5_digit_FIPS",
+      "county_name": "REPLACE County Name",
+      "population": 0,
+      "primary_metro_affinity": "REPLACE_MSA_FIPS_of_nearest_metro",
+      "secondary_metro_affinity": "REPLACE_MSA_FIPS_or_null",
+      "affinity_weights": {"REPLACE_MSA_FIPS": 1.0},
+      "contacts": {
+        "health_officer": {
+          "name": "REPLACE Name",
+          "email": "REPLACE email",
+          "phone": "REPLACE +1XXXXXXXXXX",
+          "preferred_channel": "sms or email"
+        }
+      },
+      "delivery_preferences": {
+        "channels": ["sms", "email"],
+        "alert_threshold": "MODERATE",
+        "quiet_hours": {"start": "22:00", "end": "06:00", "timezone": "America/Chicago"}
+      }
+    }
+  ],
+
+  "_subscribing_counties_notes": [
+    "Add one entry per rural county that wants to receive alerts.",
+    "primary_metro_affinity: MSA code of the metro whose signal most predicts this county.",
+    "affinity_weights: how much weight to give each metro (must sum to 1.0).",
+    "alert_threshold: minimum severity to trigger delivery (LOW, MODERATE, HIGH, CRITICAL).",
+    "The system auto-discovers county relationships if you run seed_calibration_data.py."
+  ],
+
+  "disease_overrides": {
+    "_comment": "Optional per-state overrides. Omit or set to null to use disease config defaults."
+  }
+}

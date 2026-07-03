@@ -1,0 +1,9 @@
+{
+  "_deprecated": true,
+  "_message": "This file is superseded by config/diseases/*.json — each disease config contains its own detection thresholds. Kept for backward compatibility with tests.",
+  "_migration": "See config/diseases/influenza.json → detection.threshold_pct_ed_visits",
+
+  "influenza": {"threshold_pct": 1.0, "require_rising": true},
+  "rsv": {"threshold_pct": 0.5, "require_rising": true},
+  "covid": {"threshold_pct": 0.3, "require_rising": true}
+}

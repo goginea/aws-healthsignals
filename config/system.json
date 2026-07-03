@@ -1,0 +1,70 @@
+{
+  "version": "1.1.0",
+  "project_name": "healthsignals",
+  "description": "Amazon HealthSignals — Bedrock Agent Blueprint for Public Health Preparedness",
+
+  "infrastructure": {
+    "data_bucket_name_pattern": "healthsignals-data-{account_id}-{region}",
+    "config_prefix": "config/",
+    "raw_data_prefix": "raw/",
+    "processed_data_prefix": "processed/"
+  },
+
+  "dynamodb_tables": {
+    "county_configs": "healthsignals-county-configs",
+    "alert_state": "healthsignals-alert-state",
+    "calibration": "healthsignals-calibration",
+    "subscriptions": "healthsignals-subscriptions",
+    "pipeline_runs": "healthsignals-pipeline-runs"
+  },
+
+  "bedrock": {
+    "routine_model_id": "anthropic.claude-3-haiku-20240307-v1:0",
+    "high_severity_model_id": "anthropic.claude-3-5-sonnet-20241022-v2:0",
+    "severity_threshold_for_upgrade": ["HIGH", "CRITICAL"],
+    "guardrail_id": "",
+    "guardrail_version": "DRAFT",
+    "knowledge_bases": {
+      "cdc_guidelines": {
+        "id": "",
+        "description": "CDC preparedness guidelines — precision retrieval"
+      },
+      "communication_templates": {
+        "id": "",
+        "description": "Alert communication templates — variety retrieval"
+      }
+    }
+  },
+
+  "delivery": {
+    "ses_sender_email": "alerts@healthsignals.example.com",
+    "sns_topic_arn_pattern": "arn:aws:sns:{region}:{account_id}:healthsignals-alerts",
+    "max_sms_length": 160,
+    "max_email_words": 800
+  },
+
+  "subscription": {
+    "api_base_url": "https://api.healthsignals.example.com/prod",
+    "max_subscriptions_per_county": 10,
+    "verification_expiry_hours": 72,
+    "annual_reverification": true
+  },
+
+  "scheduling": {
+    "ingestion_cron": "cron(0 6 ? * MON *)",
+    "prediction_trigger": "on_new_data",
+    "alert_generation_trigger": "on_leader_detected"
+  },
+
+  "orchestration": {
+    "circuit_breaker_max_counties": 50,
+    "max_concurrent_step_functions": 20,
+    "pipeline_timeout_minutes": 30
+  },
+
+  "observability": {
+    "log_level": "INFO",
+    "xray_enabled": true,
+    "metrics_namespace": "HealthSignals"
+  }
+}

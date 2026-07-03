@@ -1,0 +1,72 @@
+{
+  "disease_key": "rsv",
+  "display_name": "Respiratory Syncytial Virus (RSV)",
+  "icd10_codes": ["J12.1", "J20.5", "J21.0"],
+  "enabled": true,
+
+  "detection": {
+    "threshold_pct_ed_visits": 0.5,
+    "require_rising_trend": true,
+    "min_consecutive_weeks_above": 1,
+    "notes": "0.5% ED visits while rising. RSV has lower baseline than flu but affects young children severely."
+  },
+
+  "data_sources": {
+    "delphi": {
+      "data_source": "nssp",
+      "signal": "pct_ed_visits_rsv",
+      "smoothed_signal": "smoothed_pct_ed_visits_rsv"
+    },
+    "cdc_wastewater": {
+      "socrata_dataset_id": "45cq-cw4i",
+      "dataset_name": "CDC Wastewater Data for RSV"
+    },
+    "cdc_nssp": {
+      "pathogen_name": "RSV"
+    }
+  },
+
+  "seasonality": {
+    "typical_season_start_week": 44,
+    "typical_season_end_week": 14,
+    "peak_month_range": ["January", "March"],
+    "notes": "RSV season slightly later than flu in most regions. Can start as early as Oct in southern states."
+  },
+
+  "severity_classification": {
+    "LOW": {
+      "description": "Signal detected but below historical average",
+      "pct_range": [0.5, 1.5],
+      "action": "Monitor, no alert needed"
+    },
+    "MODERATE": {
+      "description": "At or above historical average",
+      "pct_range": [1.5, 3.0],
+      "action": "Preparation recommended"
+    },
+    "HIGH": {
+      "description": "Significantly above average or accelerating",
+      "pct_range": [3.0, 6.0],
+      "action": "Urgent preparation — pediatric capacity concern"
+    },
+    "CRITICAL": {
+      "description": "Unprecedented level, multiple metros affected",
+      "pct_range": [6.0, null],
+      "action": "Emergency response — pediatric surge expected"
+    }
+  },
+
+  "prediction": {
+    "average_warning_window_weeks": 3.0,
+    "typical_lag_range_weeks": [2, 5],
+    "severity_multiplier_typical_range": [1.2, 3.0],
+    "confidence_degrades_after_seasons": 2,
+    "notes": "RSV has shorter warning window than flu. San Antonio leads RSV in some TX seasons."
+  },
+
+  "prompt_hints": {
+    "preparation_focus": ["Pediatric bed capacity", "oxygen supply", "palivizumab availability", "parent communication"],
+    "contraindications": ["Do NOT recommend specific medications", "Do NOT provide clinical protocols"],
+    "seasonal_context": "RSV hits young children and elderly hardest. Hospital surge planning critical."
+  }
+}

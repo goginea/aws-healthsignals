@@ -1,0 +1,47 @@
+{
+  "subscription_table": "healthsignals-subscriptions",
+
+  "verification": {
+    "token_expiry_hours": 72,
+    "resend_cooldown_minutes": 15,
+    "max_resend_attempts": 3
+  },
+
+  "unsubscribe": {
+    "token_expiry_days": 365,
+    "soft_delete": true,
+    "retention_days_after_unsubscribe": 90
+  },
+
+  "limits": {
+    "max_subscriptions_per_county": 10,
+    "max_subscriptions_per_email": 5,
+    "rate_limit_per_ip_per_hour": 20
+  },
+
+  "annual_reverification": {
+    "enabled": true,
+    "warning_days_before_expiry": 30,
+    "grace_period_days": 14
+  },
+
+  "delivery_defaults": {
+    "channels": ["email"],
+    "alert_threshold": "MODERATE",
+    "quiet_hours": null,
+    "digest_mode": false
+  },
+
+  "email_templates": {
+    "verification_subject": "Verify your HealthSignals subscription — {county_name}",
+    "welcome_subject": "Welcome to HealthSignals — {county_name} is now subscribed",
+    "unsubscribe_subject": "HealthSignals — {county_name} unsubscribed",
+    "reverification_subject": "Action needed: Renew your HealthSignals subscription — {county_name}"
+  },
+
+  "api": {
+    "base_url_pattern": "https://{api_id}.execute-api.{region}.amazonaws.com/prod",
+    "cors_origins": ["*"],
+    "require_api_key_for_admin": true
+  }
+}

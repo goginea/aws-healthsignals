@@ -1,0 +1,72 @@
+{
+  "disease_key": "covid",
+  "display_name": "COVID-19 (SARS-CoV-2)",
+  "icd10_codes": ["U07.1", "U07.2"],
+  "enabled": true,
+
+  "detection": {
+    "threshold_pct_ed_visits": 0.3,
+    "require_rising_trend": true,
+    "min_consecutive_weeks_above": 1,
+    "notes": "0.3% ED visits while rising. Lower threshold because COVID waves can accelerate faster than flu."
+  },
+
+  "data_sources": {
+    "delphi": {
+      "data_source": "nssp",
+      "signal": "pct_ed_visits_covid",
+      "smoothed_signal": "smoothed_pct_ed_visits_covid"
+    },
+    "cdc_wastewater": {
+      "socrata_dataset_id": "2ew6-ywp6",
+      "dataset_name": "NWSS Public SARS-CoV-2 Wastewater Metric Data"
+    },
+    "cdc_nssp": {
+      "pathogen_name": "COVID-19"
+    }
+  },
+
+  "seasonality": {
+    "typical_season_start_week": null,
+    "typical_season_end_week": null,
+    "peak_month_range": ["Variable"],
+    "notes": "COVID-19 does not follow predictable seasonal patterns yet. Summer and winter waves observed 2022-2025."
+  },
+
+  "severity_classification": {
+    "LOW": {
+      "description": "Signal detected but below historical average",
+      "pct_range": [0.3, 1.0],
+      "action": "Monitor, no alert needed"
+    },
+    "MODERATE": {
+      "description": "At or above recent historical average",
+      "pct_range": [1.0, 3.0],
+      "action": "Preparation recommended"
+    },
+    "HIGH": {
+      "description": "Significantly above average or new variant signal",
+      "pct_range": [3.0, 7.0],
+      "action": "Urgent preparation"
+    },
+    "CRITICAL": {
+      "description": "Unprecedented or multi-metro simultaneous surge",
+      "pct_range": [7.0, null],
+      "action": "Emergency response activation"
+    }
+  },
+
+  "prediction": {
+    "average_warning_window_weeks": 2.1,
+    "typical_lag_range_weeks": [1, 4],
+    "severity_multiplier_typical_range": [1.0, 2.5],
+    "confidence_degrades_after_seasons": 1,
+    "notes": "COVID has shorter, less predictable warning window than flu. Variant waves complicate historical calibration."
+  },
+
+  "prompt_hints": {
+    "preparation_focus": ["Testing supply ordering", "isolation protocols", "telehealth capacity", "ventilator inventory check"],
+    "contraindications": ["Do NOT recommend specific treatments", "Do NOT speculate on variants"],
+    "seasonal_context": "COVID waves are less predictable than flu. Wastewater data is especially valuable for early detection."
+  }
+}

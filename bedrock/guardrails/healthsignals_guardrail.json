@@ -1,0 +1,111 @@
+{
+  "name": "HealthSignalsGuardrail",
+  "description": "Prevents Amazon HealthSignals from generating clinical, diagnostic, or treatment content. Ensures all outputs are operational preparedness guidance only.",
+  "blockedInputMessaging": "This request contains clinical or diagnostic language that HealthSignals cannot process. HealthSignals provides operational preparedness guidance only — not clinical recommendations.",
+  "blockedOutputsMessaging": "This response was blocked because it contained clinical or diagnostic content. HealthSignals provides operational preparedness guidance only.",
+  "topicPolicyConfig": {
+    "topicsConfig": [
+      {
+        "name": "CLINICAL_TREATMENT_RECOMMENDATIONS",
+        "definition": "Any recommendation for specific medical treatments, medications, dosages, or therapeutic interventions for patients. This includes prescribing antibiotics, antivirals, specifying drug names for treatment purposes, or recommending specific clinical protocols.",
+        "examples": [
+          "Prescribe oseltamivir (Tamiflu) to affected patients",
+          "Administer 75mg twice daily for 5 days",
+          "Start antiviral treatment within 48 hours of symptom onset",
+          "Recommend amoxicillin for secondary bacterial infections"
+        ],
+        "type": "DENY"
+      },
+      {
+        "name": "DIAGNOSTIC_STATEMENTS",
+        "definition": "Any statement that diagnoses a specific condition in a patient or population, declares an outbreak as confirmed, or makes definitive clinical assessments. This includes stating that a disease 'is present' or 'has arrived' without qualification.",
+        "examples": [
+          "The county is experiencing an influenza outbreak",
+          "Patients presenting with these symptoms have RSV",
+          "This confirms community transmission of COVID-19",
+          "The outbreak has been confirmed in your area"
+        ],
+        "type": "DENY"
+      },
+      {
+        "name": "QUARANTINE_ORDERS",
+        "definition": "Any recommendation to implement quarantine, isolation orders, school closures, or mandatory public health interventions. These are legal/political decisions outside the scope of this system.",
+        "examples": [
+          "Implement mandatory isolation for confirmed cases",
+          "Close schools for 2 weeks",
+          "Issue a quarantine order for the county",
+          "Restrict travel from affected areas"
+        ],
+        "type": "DENY"
+      },
+      {
+        "name": "VACCINATION_CLINICAL_ADVICE",
+        "definition": "Specific vaccination recommendations including which vaccines to administer, dosing schedules, or contraindications. General mentions of vaccine availability as a preparedness resource are acceptable.",
+        "examples": [
+          "Administer the quadrivalent flu vaccine to all patients over 65",
+          "Recommend Paxlovid for high-risk patients",
+          "Update COVID boosters for immunocompromised populations"
+        ],
+        "type": "DENY"
+      }
+    ]
+  },
+  "wordPolicyConfig": {
+    "wordsConfig": [
+      {"text": "diagnose"},
+      {"text": "diagnosed"},
+      {"text": "prescription"},
+      {"text": "prescribe"},
+      {"text": "administer dose"},
+      {"text": "confirmed outbreak"},
+      {"text": "mandatory quarantine"},
+      {"text": "isolation order"}
+    ],
+    "managedWordListsConfig": [
+      {
+        "type": "PROFANITY"
+      }
+    ]
+  },
+  "contentPolicyConfig": {
+    "filtersConfig": [
+      {
+        "type": "SEXUAL",
+        "inputStrength": "HIGH",
+        "outputStrength": "HIGH"
+      },
+      {
+        "type": "VIOLENCE",
+        "inputStrength": "LOW",
+        "outputStrength": "MEDIUM"
+      },
+      {
+        "type": "HATE",
+        "inputStrength": "HIGH",
+        "outputStrength": "HIGH"
+      },
+      {
+        "type": "INSULTS",
+        "inputStrength": "HIGH",
+        "outputStrength": "HIGH"
+      },
+      {
+        "type": "MISCONDUCT",
+        "inputStrength": "MEDIUM",
+        "outputStrength": "MEDIUM"
+      }
+    ]
+  },
+  "contextualGroundingPolicyConfig": {
+    "filtersConfig": [
+      {
+        "type": "GROUNDING",
+        "threshold": 0.7
+      },
+      {
+        "type": "RELEVANCE",
+        "threshold": 0.7
+      }
+    ]
+  }
+}

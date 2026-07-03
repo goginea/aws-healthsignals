@@ -1,0 +1,34 @@
+{
+  "source_name": "delphi",
+  "display_name": "CMU Delphi Epidata API",
+  "description": "MSA-level syndromic surveillance data from Carnegie Mellon University Delphi Group",
+  "enabled": true,
+  "priority": "primary",
+
+  "api": {
+    "base_url": "https://api.delphi.cmu.edu/epidata/covidcast/",
+    "auth_type": "none",
+    "rate_limit_per_hour": null,
+    "timeout_seconds": 30,
+    "retry_max_attempts": 3,
+    "retry_backoff_seconds": 5
+  },
+
+  "query_defaults": {
+    "geo_type": "msa",
+    "time_type": "day",
+    "lookback_weeks": 8
+  },
+
+  "s3_storage": {
+    "prefix_pattern": "raw/delphi/{data_source}/{signal}/{year}/W{week}/{geo_value}.json"
+  },
+
+  "notes": {
+    "sla": "None — grant-funded academic project with no uptime guarantee",
+    "update_frequency": "Daily (we fetch weekly for efficiency)",
+    "coverage": "~78% of US EDs report to NSSP (as of May 2024)",
+    "risk": "API may go offline without notice. CDC NSSP direct provides redundancy.",
+    "validated": "2026-07-02"
+  }
+}
