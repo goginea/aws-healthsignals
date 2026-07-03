@@ -165,10 +165,10 @@ curl -X POST https://API_ID.execute-api.us-east-1.amazonaws.com/prod/subscribe \
 | `HealthSignals-Ingestion` | S3 bucket, SQS queues + DLQ, 3 fetcher Lambdas, EventBridge schedule |
 | `HealthSignals-Prediction` | DynamoDB tables (configs, alerts, calibration), 3 prediction Lambdas |
 | `HealthSignals-Generation` | Step Functions state machine, Bedrock IAM, Guardrails |
-| `HealthSignals-Delivery` | SES/SNS configuration, alert dispatcher Lambda |
+| `HealthSignals-Delivery` | SES/SNS, alert dispatcher, feedback collector + recalibrator, feedback DynamoDB, Secrets Manager |
 | `HealthSignals-Monitoring` | CloudWatch dashboards, X-Ray, alarms |
 | `HealthSignals-Orchestration` | Pipeline coordinator Lambda, pipeline_runs DynamoDB, S3 event trigger |
-| `HealthSignals-Subscription` | API Gateway, 5 subscription Lambdas, subscriptions DynamoDB, GSIs |
+| `HealthSignals-Subscription` | API Gateway, 5 subscription Lambdas, subscriptions DynamoDB, GSIs, Secrets Manager |
 
 ## Knowledge Bases (Pre-populated)
 
