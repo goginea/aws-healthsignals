@@ -62,8 +62,8 @@ Rural health departments (2,000+ counties, <50K population) lack resources for r
 │  │  ┌─────────────┐  ┌─────────────┐  ┌──────────┐  ┌──────────┐  │         │
 │  │  │ Situation   │─▶│ Severity    │─▶│Checklist │─▶│  Comms   │  │         │
 │  │  │ Brief       │  │ Classify    │  │Generate  │  │ Drafting │  │         │
-│  │  │(Haiku)      │  │(Haiku)      │  │(Haiku/   │  │(Haiku/   │  │         │
-│  │  │             │  │             │  │ Sonnet)  │  │ Sonnet)  │  │         │
+│  │  │(Sonnet 4.5) │  │(Sonnet 4.5) │  │(Sonnet   │  │(Sonnet   │  │         │
+│  │  │             │  │             │  │ 4.5/5)   │  │ 4.5/5)   │  │         │
 │  │  └─────────────┘  └─────────────┘  └──────────┘  └──────────┘  │         │
 │  │                                                                   │         │
 │  │  Knowledge Bases: CDC Guidelines │ Communication Templates        │         │
@@ -105,11 +105,13 @@ See [docs/CONFIGURATION.md](docs/CONFIGURATION.md) for the full config reference
 
 | Source | Endpoint | Data | Auth |
 |--------|----------|------|------|
-| **CMU Delphi Epidata** | `api.delphi.cmu.edu/epidata/covidcast/` | MSA-level % ED visits (flu, RSV, COVID) | None |
+| **CMU Delphi Epidata** | `api.delphi.cmu.edu/epidata/covidcast/` | County-level % ED visits (flu, RSV, COVID) — `geo_type=county`, `time_type=week` (epiweek YYYYWW) | None |
 | **CDC NWSS Wastewater** | `data.cdc.gov/resource/{id}.json` | Wastewater viral activity (Flu: `ymmh-divb`, RSV: `45cq-cw4i`, COVID: `2ew6-ywp6`) | None |
 | **CDC NSSP Respiratory** | `data.cdc.gov/resource/rdmq-nq56.json` | State-level % ED visits | None |
 
 All public, no PHI, no HIPAA, no data sharing agreements. See [docs/DATA_SOURCES.md](docs/DATA_SOURCES.md).
+
+> **Note:** NSSP signals on the Delphi API do NOT support `geo_type=msa`. We use the **primary county FIPS** of each metro (Harris=48201 for Houston, Dallas=48113 for DFW, Travis=48453 for Austin, Bexar=48029 for San Antonio) as a proxy for metro-level surveillance.
 
 ## Quickstart
 
@@ -120,8 +122,8 @@ cd aws-healthsignals
 
 # 2. Deploy infrastructure (7 CDK stacks)
 cd cdk && pip install -r requirements.txt
-cdk bootstrap aws://ACCOUNT_ID/us-east-1
-cdk deploy --all
+npx aws-cdk bootstrap aws://ACCOUNT_ID/us-east-1
+npx aws-cdk deploy --all
 
 # 3. Upload config to S3
 aws s3 sync config/ s3://healthsignals-data-ACCOUNT-REGION/config/
@@ -188,12 +190,12 @@ See [docs/SUBSCRIPTION_SCHEMA.md](docs/SUBSCRIPTION_SCHEMA.md).
 |-----------|---------|
 | Lambda + EventBridge + SQS | $12–20 |
 | S3 + DynamoDB | $8–15 |
-| Bedrock (Haiku 85% + Sonnet 15%) | $27–52 |
+| Bedrock (Sonnet 4.5 routine + Sonnet 5 high-severity) | $150–300 |
 | Step Functions | $3–7 |
 | SES + SNS + CloudWatch | $10–20 |
 | API Gateway (subscription API) | $1–3 |
-| **Total** | **$61–117/month** |
-| **Per county** | **$0.61–1.17/month** |
+| **Total** | **$184–358/month** |
+| **Per county** | **$1.84–3.58/month** |
 
 ## Project Structure
 

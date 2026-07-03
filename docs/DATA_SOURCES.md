@@ -40,8 +40,11 @@ All data sources are publicly available, require no authentication for basic acc
 ### Query Example
 
 ```
-GET https://api.delphi.cmu.edu/epidata/covidcast/?data_source=nssp&signal=pct_ed_visits_influenza&geo_type=msa&geo_value=26420&time_type=day&time_values=20260101-20260630
+GET https://api.delphi.cmu.edu/epidata/covidcast/?data_source=nssp&signal=pct_ed_visits_influenza&geo_type=county&geo_value=48201&time_type=week&time_values=202439-202524
 ```
+
+> ⚠️ **IMPORTANT:** NSSP signals do NOT support `geo_type=msa` — use `geo_type=county` with the metro's primary county FIPS.
+> Use `time_type=week` with epiweek format (YYYYWW), NOT `time_type=day` with YYYYMMDD.
 
 ### Limitations
 
