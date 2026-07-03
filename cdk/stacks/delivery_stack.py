@@ -62,6 +62,7 @@ class DeliveryStack(Stack):
         self.alert_dispatcher = _lambda.Function(
             self,
             "AlertDispatcher",
+            function_name="healthsignals-alert-dispatcher",
             runtime=_lambda.Runtime.PYTHON_3_11,
             code=_lambda.Code.from_asset("../lambdas/delivery/alert_dispatcher"),
             handler="handler.lambda_handler",

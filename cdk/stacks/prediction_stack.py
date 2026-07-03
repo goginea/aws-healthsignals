@@ -67,6 +67,7 @@ class PredictionStack(Stack):
         self.leader_detection = _lambda.Function(
             self,
             "LeaderDetection",
+            function_name="healthsignals-leader-detection",
             runtime=_lambda.Runtime.PYTHON_3_11,
             code=_lambda.Code.from_asset("../lambdas/prediction/leader_detection"),
             handler="handler.lambda_handler",
@@ -84,6 +85,7 @@ class PredictionStack(Stack):
         self.geographic_affinity = _lambda.Function(
             self,
             "GeographicAffinity",
+            function_name="healthsignals-geographic-affinity",
             runtime=_lambda.Runtime.PYTHON_3_11,
             code=_lambda.Code.from_asset("../lambdas/prediction/geographic_affinity"),
             handler="handler.lambda_handler",
@@ -99,6 +101,7 @@ class PredictionStack(Stack):
         self.timing_estimation = _lambda.Function(
             self,
             "TimingEstimation",
+            function_name="healthsignals-timing-estimation",
             runtime=_lambda.Runtime.PYTHON_3_11,
             code=_lambda.Code.from_asset("../lambdas/prediction/timing_estimation"),
             handler="handler.lambda_handler",
