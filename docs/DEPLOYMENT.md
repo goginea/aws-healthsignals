@@ -185,6 +185,36 @@ All requests include `"thinking": {"type": "disabled"}` to prevent extended thin
 
 ---
 
+
+## Step 7: Create Bedrock Guardrail (Recommended)
+
+The system is designed to block clinical treatment recommendations and diagnostic statements from AI-generated alerts. To activate this:
+
+1. Go to **Amazon Bedrock** → **Guardrails** in the console
+2. Create a new guardrail with:
+   - **Name:** `healthsignals-clinical-blocker`
+   - **Denied Topics:**
+     - Clinical treatment recommendations (prescribing drugs, dosages)
+     - Diagnostic statements (confirming infections, making diagnoses)
+     - Quarantine/isolation orders (legal actions)
+     - Vaccination mandates (policy decisions)
+   - **Word Filters:** "prescribe", "administer [drug]", "confirmed cases", "diagnosis is"
+   - **Content Policy:** Block outputs that could be interpreted as medical advice
+3. Note the **Guardrail ID** (format: `abcdefgh1234`)
+4. Update `config/system.json`:
+   ```json
+   "bedrock": {
+     "guardrail_id": "YOUR_GUARDRAIL_ID",
+     "guardrail_version": "DRAFT"
+   }
+   ```
+5. Upload updated config: `aws s3 cp config/system.json s3://healthsignals-data-ACCOUNT_ID-us-east-1/config/system.json`
+
+> **Note:** The guardrail is NOT wired into the Step Functions ASL automatically — it requires adding `GuardrailIdentifier` and `GuardrailVersion` parameters to each InvokeModel state. This is a planned enhancement. For now, the system relies on prompt-level instructions ("Never recommend clinical treatments") as the primary safety mechanism.
+
+Reference config: `bedrock/guardrails/healthsignals_guardrail.json`
+
+
 ## Troubleshooting
 
 ### `ConfigLoadError: Failed to load s3://...`

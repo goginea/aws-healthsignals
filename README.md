@@ -63,11 +63,11 @@ Rural health departments (2,000+ counties, <50K population) lack resources for r
 │  │  │ Situation   │─▶│ Severity    │─▶│Checklist │─▶│  Comms   │  │         │
 │  │  │ Brief       │  │ Classify    │  │Generate  │  │ Drafting │  │         │
 │  │  │(Sonnet 4.5) │  │(Sonnet 4.5) │  │(Sonnet   │  │(Sonnet   │  │         │
-│  │  │             │  │             │  │ 4.5/5)   │  │ 4.5/5)   │  │         │
+│  │  │             │  │             │  │ 4.5/5)   │  │ 4.5)     │  │         │
 │  │  └─────────────┘  └─────────────┘  └──────────┘  └──────────┘  │         │
 │  │                                                                   │         │
 │  │  Knowledge Bases: CDC Guidelines │ Communication Templates        │         │
-│  │  Guardrails: Block clinical/diagnostic language                   │         │
+│  │  Guardrails: Configured (see DEPLOYMENT.md Step 7 to activate)    │         │
 │  └───────────────────────────────────────────────────────────────────┘         │
 │                              │                                                  │
 │                              ▼                                                  │
@@ -180,7 +180,7 @@ curl -X POST https://API_ID.execute-api.us-east-1.amazonaws.com/prod/subscribe \
 - CERC communication principles (be first/right/credible, uncertainty language)
 - Rural health resources (HPSA, mutual aid, Critical Access Hospital limits)
 
-### Communication Templates (Variety Retrieval) — 27 templates, 44 KB
+### Communication Templates (Variety Retrieval) — 33 templates, 49 KB
 - 5 severity-graded email alerts (LOW → CRITICAL → ALL-CLEAR)
 - 7 SMS templates (≤160 characters)
 - 5 public announcement templates (press release, Facebook, school letters)
@@ -270,9 +270,9 @@ aws-healthsignals/
 ├── bedrock/
 │   ├── prompts/                    # 4 system prompts
 │   ├── guardrails/                 # Denied topics + word filters
-│   └── knowledge_bases/            # Pre-populated (11 docs, 88 KB)
+│   └── knowledge_bases/            # Pre-populated (11 docs, 92 KB)
 │       ├── cdc_guidelines/         # 6 CDC reference documents
-│       └── communication_templates/ # 27 templates (5 categories)
+│       └── communication_templates/ # 33 templates (6 categories)
 ├── tests/
 │   ├── unit/                       # pytest unit tests
 │   ├── integration/                # Live API connectivity tests
