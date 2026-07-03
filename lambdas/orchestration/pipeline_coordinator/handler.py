@@ -402,16 +402,19 @@ def load_latest_metro_signals(state_key: str, disease_key: str) -> dict:
     metros = state_config.get("sentinel_metros", {})
 
     # Get the Delphi signal name for this disease
-    delphi_signal = disease_config.get("data_sources", {}).get("delphi_signal", "")
-    if ":" in delphi_signal:
-        data_source, signal_name = delphi_signal.split(":", 1)
-    else:
-        signal_name = delphi_signal
-        data_source = "nssp"
+    delphi_config = disease_config.get("data_sources", {}).get("delphi", {})
+    data_source = delphi_config.get("data_source", "nssp")
+    signal_name = delphi_config.get("signal", "")
+
+    if not signal_name:
+        logger.warning(f"No Delphi signal configured for {disease_key}")
+        return {}
 
     metro_signals = {}
 
-    for msa_code in metros:
+    for msa_code, metro_info in metros.items():
+        # Use primary_county_fips for S3 lookup (data is saved by county FIPS, not MSA code)
+        geo_value = metro_info.get("primary_county_fips", metro_info.get("county_fips", [msa_code])[0])
         try:
             # Find the most recent data file for this metro
             prefix = f"raw/delphi/{data_source}/{signal_name}/"
@@ -446,8 +449,8 @@ def load_latest_metro_signals(state_key: str, disease_key: str) -> dict:
             if not week_prefixes:
                 continue
 
-            # Read the latest data file for this MSA
-            data_key = f"{week_prefixes[0]}{msa_code}.json"
+            # Read the latest data file (keyed by county FIPS, not MSA code)
+            data_key = f"{week_prefixes[0]}{geo_value}.json"
             obj = s3_client.get_object(Bucket=DATA_BUCKET, Key=data_key)
             raw_data = json.loads(obj["Body"].read().decode())
 
