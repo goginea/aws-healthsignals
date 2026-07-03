@@ -10,6 +10,7 @@
       "name": "Houston-The Woodlands-Sugar Land",
       "short_name": "Houston",
       "msa_fips": "26420",
+      "primary_county_fips": "48201",
       "county_fips": [
         "48201", "48157", "48339", "48039", "48167", "48071", "48291", "48473"
       ],
@@ -22,6 +23,7 @@
       "name": "Dallas-Fort Worth-Arlington",
       "short_name": "DFW",
       "msa_fips": "19100",
+      "primary_county_fips": "48113",
       "county_fips": [
         "48113", "48439", "48085", "48121", "48257", "48139", "48231", "48367", "48397", "48251"
       ],
@@ -34,6 +36,7 @@
       "name": "Austin-Round Rock-Georgetown",
       "short_name": "Austin",
       "msa_fips": "12420",
+      "primary_county_fips": "48453",
       "county_fips": [
         "48453", "48491", "48209", "48021", "48055"
       ],
@@ -46,6 +49,7 @@
       "name": "San Antonio-New Braunfels",
       "short_name": "San Antonio",
       "msa_fips": "41700",
+      "primary_county_fips": "48029",
       "county_fips": [
         "48029", "48091", "48187", "48259", "48325", "48493"
       ],

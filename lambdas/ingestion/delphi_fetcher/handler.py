@@ -15,9 +15,13 @@ from typing import Any
 import boto3
 import urllib3
 
-# Add shared module to path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "shared"))
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
+# Add shared module to path (for local development — in Lambda, the Layer handles this)
+_shared_path = os.path.join(os.path.dirname(__file__), "..", "..", "shared")
+_lambdas_path = os.path.join(os.path.dirname(__file__), "..", "..")
+if os.path.exists(_shared_path):
+    sys.path.insert(0, _shared_path)
+    sys.path.insert(0, _lambdas_path)
+
 from shared.config_loader import (
     get_system_config,
     get_data_source_config,
@@ -60,11 +64,14 @@ def lambda_handler(event: dict, context: Any) -> dict:
     timeout = delphi_config["api"]["timeout_seconds"]
     lookback_weeks = delphi_config["query_defaults"]["lookback_weeks"]
     geo_type = delphi_config["query_defaults"]["geo_type"]
+    time_type = delphi_config["query_defaults"]["time_type"]
 
-    # Calculate date range
+    # Calculate epiweek range (YYYYWW format for time_type=week)
     today = datetime.utcnow()
-    start_date = (today - timedelta(weeks=lookback_weeks)).strftime("%Y%m%d")
-    end_date = today.strftime("%Y%m%d")
+    start_dt = today - timedelta(weeks=lookback_weeks)
+    # Epiweek format: YYYYWW
+    start_week = f"{start_dt.year}{start_dt.isocalendar()[1]:02d}"
+    end_week = f"{today.year}{today.isocalendar()[1]:02d}"
 
     results = {"fetched": [], "errors": []}
 
@@ -78,22 +85,26 @@ def lambda_handler(event: dict, context: Any) -> dict:
         data_source = delphi_source["data_source"]
         signal_name = delphi_source["signal"]
 
-        # For each sentinel metro across all active states
+        # For each sentinel metro — use primary_county_fips as geo_value
+        # (NSSP signals don't support geo_type=msa, only county)
         for msa_code, metro_info in all_metros.items():
+            # Use primary county FIPS if available, fallback to first in list
+            geo_value = metro_info.get("primary_county_fips", metro_info.get("county_fips", [msa_code])[0])
             try:
                 data = fetch_signal(
                     api_base=api_base,
                     data_source=data_source,
                     signal_name=signal_name,
                     geo_type=geo_type,
-                    geo_value=msa_code,
-                    start_date=start_date,
-                    end_date=end_date,
+                    geo_value=geo_value,
+                    time_type=time_type,
+                    start_week=start_week,
+                    end_week=end_week,
                     timeout=timeout,
                 )
 
                 s3_key = build_s3_key(
-                    today, data_source, signal_name, msa_code,
+                    today, data_source, signal_name, geo_value,
                     delphi_config["s3_storage"]["prefix_pattern"]
                 )
                 store_to_s3(data, s3_key, data_bucket)
@@ -131,8 +142,9 @@ def fetch_signal(
     signal_name: str,
     geo_type: str,
     geo_value: str,
-    start_date: str,
-    end_date: str,
+    time_type: str,
+    start_week: str,
+    end_week: str,
     timeout: int = 30,
 ) -> dict:
     """Call the Delphi Epidata covidcast endpoint."""
@@ -141,8 +153,8 @@ def fetch_signal(
         "signal": signal_name,
         "geo_type": geo_type,
         "geo_value": geo_value,
-        "time_type": "day",
-        "time_values": f"{start_date}-{end_date}",
+        "time_type": time_type,
+        "time_values": f"{start_week}-{end_week}",
     }
 
     query_string = "&".join(f"{k}={v}" for k, v in params.items())

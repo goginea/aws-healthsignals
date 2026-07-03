@@ -32,10 +32,11 @@ ingestion = IngestionStack(app, "HealthSignals-Ingestion", env=env)
 prediction = PredictionStack(app, "HealthSignals-Prediction", env=env)
 generation = GenerationStack(app, "HealthSignals-Generation", env=env)
 
+# Orchestration uses bucket name string (not construct) to avoid circular dependency
 orchestration = OrchestrationStack(
     app,
     "HealthSignals-Orchestration",
-    data_bucket=ingestion.data_bucket,
+    data_bucket_name=ingestion.data_bucket.bucket_name,
     state_machine_arn=generation.state_machine.state_machine_arn,
     leader_detection_function_name="healthsignals-leader-detection",
     geo_affinity_function_name="healthsignals-geographic-affinity",
@@ -47,10 +48,11 @@ delivery = DeliveryStack(app, "HealthSignals-Delivery", env=env)
 subscription = SubscriptionStack(app, "HealthSignals-Subscription", env=env)
 monitoring = MonitoringStack(app, "HealthSignals-Monitoring", env=env)
 
-# Explicit dependencies
+# Explicit dependencies (linear chain — no cycles)
 prediction.add_dependency(ingestion)
 generation.add_dependency(prediction)
-orchestration.add_dependency(generation)
+orchestration.add_dependency(ingestion)  # Needs bucket to exist
+orchestration.add_dependency(generation)  # Needs state machine to exist
 delivery.add_dependency(orchestration)
 subscription.add_dependency(delivery)
 monitoring.add_dependency(subscription)

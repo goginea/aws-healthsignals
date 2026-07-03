@@ -1,7 +1,7 @@
 {
   "source_name": "delphi",
   "display_name": "CMU Delphi Epidata API",
-  "description": "MSA-level syndromic surveillance data from Carnegie Mellon University Delphi Group",
+  "description": "County-level syndromic surveillance data from Carnegie Mellon University Delphi Group",
   "enabled": true,
   "priority": "primary",
 
@@ -15,8 +15,8 @@
   },
 
   "query_defaults": {
-    "geo_type": "msa",
-    "time_type": "day",
+    "geo_type": "county",
+    "time_type": "week",
     "lookback_weeks": 8
   },
 

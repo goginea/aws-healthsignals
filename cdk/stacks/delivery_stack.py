@@ -4,9 +4,9 @@ Deploys:
 - SNS topic for SMS alerts
 - SES configuration for email briefs
 - DynamoDB feedback table
-- Feedback recalibrator Lambda
-- Alert dispatcher Lambda
-- Feedback collector Lambda + API Gateway endpoint
+- Shared Lambda Layer
+- Alert dispatcher, Feedback collector, Feedback recalibrator Lambdas
+- API Gateway for feedback endpoint
 """
 from aws_cdk import (
     Stack,
@@ -27,6 +27,16 @@ class DeliveryStack(Stack):
     def __init__(self, scope: Construct, construct_id: str, **kwargs) -> None:
         super().__init__(scope, construct_id, **kwargs)
 
+        # --- Shared Lambda Layer ---
+        self.shared_layer = _lambda.LayerVersion(
+            self,
+            "SharedUtilsLayer",
+            layer_version_name="healthsignals-shared-delivery",
+            code=_lambda.Code.from_asset("../layers/shared"),
+            compatible_runtimes=[_lambda.Runtime.PYTHON_3_11],
+            description="Shared utilities: config_loader, token_utils",
+        )
+
         # --- DynamoDB: Feedback Table ---
         self.feedback_table = dynamodb.Table(
             self,
@@ -42,7 +52,6 @@ class DeliveryStack(Stack):
             removal_policy=RemovalPolicy.RETAIN,
             point_in_time_recovery=True,
         )
-        # GSI for querying feedback by county (needed by recalibrator)
         self.feedback_table.add_global_secondary_index(
             index_name="county-index",
             partition_key=dynamodb.Attribute(
@@ -68,15 +77,16 @@ class DeliveryStack(Stack):
             handler="handler.lambda_handler",
             timeout=Duration.minutes(2),
             memory_size=256,
+            layers=[self.shared_layer],
             environment={
                 "SNS_TOPIC_ARN": self.alert_topic.topic_arn,
                 "SENDER_EMAIL": self.node.try_get_context("alert_sender_email")
                 or "alerts@healthsignals.example.com",
                 "SUBSCRIPTIONS_TABLE": "healthsignals-subscriptions",
+                "CONFIG_BUCKET": f"healthsignals-data-{self.account}-{self.region}",
+                "CONFIG_PREFIX": "config/",
             },
         )
-
-        # Grant SES send (scoped to account's verified identities)
         self.alert_dispatcher.add_to_role_policy(
             iam.PolicyStatement(
                 actions=["ses:SendEmail", "ses:SendRawEmail"],
@@ -84,8 +94,6 @@ class DeliveryStack(Stack):
             )
         )
         self.alert_topic.grant_publish(self.alert_dispatcher)
-
-        # Grant DynamoDB read for subscriptions table
         self.alert_dispatcher.add_to_role_policy(
             iam.PolicyStatement(
                 actions=["dynamodb:Query", "dynamodb:GetItem", "dynamodb:UpdateItem"],
@@ -95,8 +103,14 @@ class DeliveryStack(Stack):
                 ],
             )
         )
+        self.alert_dispatcher.add_to_role_policy(
+            iam.PolicyStatement(
+                actions=["s3:GetObject"],
+                resources=[f"arn:aws:s3:::healthsignals-data-{self.account}-{self.region}/config/*"],
+            )
+        )
 
-        # --- Feedback Collector Lambda + API ---
+        # --- Feedback Collector Lambda ---
         self.feedback_collector = _lambda.Function(
             self,
             "FeedbackCollector",
@@ -105,14 +119,13 @@ class DeliveryStack(Stack):
             handler="handler.lambda_handler",
             timeout=Duration.seconds(30),
             memory_size=256,
+            layers=[self.shared_layer],
             environment={
                 "FEEDBACK_TABLE": "healthsignals-feedback",
                 "RECALIBRATOR_FUNCTION_NAME": "healthsignals-feedback-recalibrator",
                 "RECALIBRATION_THRESHOLD": "3",
             },
         )
-
-        # Grant DynamoDB write + query for feedback (need query to count responses)
         self.feedback_collector.add_to_role_policy(
             iam.PolicyStatement(
                 actions=["dynamodb:PutItem", "dynamodb:Query"],
@@ -122,14 +135,10 @@ class DeliveryStack(Stack):
                 ],
             )
         )
-
-        # Grant Lambda invoke for triggering recalibrator
         self.feedback_collector.add_to_role_policy(
             iam.PolicyStatement(
                 actions=["lambda:InvokeFunction"],
-                resources=[
-                    f"arn:aws:lambda:{self.region}:{self.account}:function:healthsignals-feedback-recalibrator",
-                ],
+                resources=[f"arn:aws:lambda:{self.region}:{self.account}:function:healthsignals-feedback-recalibrator"],
             )
         )
 
@@ -143,13 +152,14 @@ class DeliveryStack(Stack):
             handler="handler.lambda_handler",
             timeout=Duration.minutes(5),
             memory_size=256,
+            layers=[self.shared_layer],
             environment={
                 "FEEDBACK_TABLE": "healthsignals-feedback",
                 "CALIBRATION_TABLE": "healthsignals-calibration",
+                "CONFIG_BUCKET": f"healthsignals-data-{self.account}-{self.region}",
+                "CONFIG_PREFIX": "config/",
             },
         )
-
-        # Grant DynamoDB read/write for recalibration
         self.feedback_recalibrator.add_to_role_policy(
             iam.PolicyStatement(
                 actions=["dynamodb:Scan", "dynamodb:Query", "dynamodb:GetItem", "dynamodb:PutItem"],
@@ -157,6 +167,12 @@ class DeliveryStack(Stack):
                     f"arn:aws:dynamodb:{self.region}:{self.account}:table/healthsignals-feedback",
                     f"arn:aws:dynamodb:{self.region}:{self.account}:table/healthsignals-calibration",
                 ],
+            )
+        )
+        self.feedback_recalibrator.add_to_role_policy(
+            iam.PolicyStatement(
+                actions=["s3:GetObject"],
+                resources=[f"arn:aws:s3:::healthsignals-data-{self.account}-{self.region}/config/*"],
             )
         )
 
@@ -167,7 +183,6 @@ class DeliveryStack(Stack):
             rest_api_name="healthsignals-feedback",
             description="HealthSignals Feedback Collection API",
         )
-
         feedback_resource = self.feedback_api.root.add_resource("feedback")
         feedback_resource.add_method(
             "POST",

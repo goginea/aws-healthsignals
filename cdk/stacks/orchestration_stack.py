@@ -4,12 +4,17 @@ Deploys:
 - Pipeline coordinator Lambda (triggered by S3 data landing)
 - S3 event notification on the data bucket
 - DynamoDB pipeline_runs table (observability)
+- Shared Lambda Layer
 - IAM permissions for Lambda invocation + Step Functions StartExecution
+
+NOTE: Uses bucket name lookup (not cross-stack reference) to avoid
+a CDK dependency cycle with the Ingestion stack.
 """
 from aws_cdk import (
     Stack,
     Duration,
     RemovalPolicy,
+    Fn,
     aws_lambda as _lambda,
     aws_iam as iam,
     aws_dynamodb as dynamodb,
@@ -24,7 +29,7 @@ class OrchestrationStack(Stack):
         self,
         scope: Construct,
         construct_id: str,
-        data_bucket: s3.IBucket,
+        data_bucket_name: str = "",
         state_machine_arn: str = "",
         leader_detection_function_name: str = "healthsignals-leader-detection",
         geo_affinity_function_name: str = "healthsignals-geographic-affinity",
@@ -32,6 +37,22 @@ class OrchestrationStack(Stack):
         **kwargs,
     ) -> None:
         super().__init__(scope, construct_id, **kwargs)
+
+        # Resolve data bucket by name (avoids cross-stack circular dependency)
+        bucket_name = data_bucket_name or f"healthsignals-data-{self.account}-{self.region}"
+        data_bucket = s3.Bucket.from_bucket_name(
+            self, "DataBucketRef", bucket_name
+        )
+
+        # --- Shared Lambda Layer ---
+        self.shared_layer = _lambda.LayerVersion(
+            self,
+            "SharedUtilsLayer",
+            layer_version_name="healthsignals-shared-orchestration",
+            code=_lambda.Code.from_asset("../layers/shared"),
+            compatible_runtimes=[_lambda.Runtime.PYTHON_3_11],
+            description="Shared utilities: config_loader, token_utils",
+        )
 
         # --- DynamoDB: Pipeline Runs (observability) ---
         self.pipeline_runs_table = dynamodb.Table(
@@ -43,7 +64,7 @@ class OrchestrationStack(Stack):
             ),
             billing_mode=dynamodb.BillingMode.PAY_PER_REQUEST,
             removal_policy=RemovalPolicy.RETAIN,
-            time_to_live_attribute="ttl",  # Auto-expire old records after 90 days
+            time_to_live_attribute="ttl",
         )
 
         # --- Pipeline Coordinator Lambda ---
@@ -54,11 +75,12 @@ class OrchestrationStack(Stack):
             runtime=_lambda.Runtime.PYTHON_3_11,
             code=_lambda.Code.from_asset("../lambdas/orchestration/pipeline_coordinator"),
             handler="handler.lambda_handler",
-            timeout=Duration.minutes(10),  # Needs time for synchronous Lambda calls
+            timeout=Duration.minutes(10),
             memory_size=512,
+            layers=[self.shared_layer],
             environment={
-                "DATA_BUCKET": data_bucket.bucket_name,
-                "CONFIG_BUCKET": data_bucket.bucket_name,
+                "DATA_BUCKET": bucket_name,
+                "CONFIG_BUCKET": bucket_name,
                 "CONFIG_PREFIX": "config/",
                 "LEADER_DETECTION_FUNCTION": leader_detection_function_name,
                 "GEO_AFFINITY_FUNCTION": geo_affinity_function_name,
@@ -118,7 +140,6 @@ class OrchestrationStack(Stack):
                 )
             )
         else:
-            # Wildcard for development — scope down for production
             self.coordinator.add_to_role_policy(
                 iam.PolicyStatement(
                     actions=["states:StartExecution"],
@@ -129,7 +150,6 @@ class OrchestrationStack(Stack):
             )
 
         # --- S3 Event Notification: Trigger on new Delphi data ---
-        # Trigger when any file is created under raw/delphi/
         data_bucket.add_event_notification(
             s3.EventType.OBJECT_CREATED,
             s3n.LambdaDestination(self.coordinator),

@@ -36,6 +36,16 @@ class SubscriptionStack(Stack):
             ),
         )
 
+        # --- Shared Lambda Layer ---
+        self.shared_layer = _lambda.LayerVersion(
+            self,
+            "SharedUtilsLayer",
+            layer_version_name="healthsignals-shared-subscription",
+            code=_lambda.Code.from_asset("../layers/shared"),
+            compatible_runtimes=[_lambda.Runtime.PYTHON_3_11],
+            description="Shared utilities: config_loader, token_utils",
+        )
+
         # --- DynamoDB Subscriptions Table ---
         self.subscriptions_table = dynamodb.Table(
             self,
@@ -52,7 +62,6 @@ class SubscriptionStack(Stack):
             point_in_time_recovery=True,
         )
 
-        # GSI: Look up by status (for batch operations like expiry checks)
         self.subscriptions_table.add_global_secondary_index(
             index_name="status-index",
             partition_key=dynamodb.Attribute(
@@ -63,7 +72,6 @@ class SubscriptionStack(Stack):
             ),
         )
 
-        # GSI: Look up by state (for state-level admin queries)
         self.subscriptions_table.add_global_secondary_index(
             index_name="state-index",
             partition_key=dynamodb.Attribute(
@@ -77,10 +85,9 @@ class SubscriptionStack(Stack):
         # --- Shared Lambda Environment ---
         lambda_env = {
             "SUBSCRIPTIONS_TABLE": self.subscriptions_table.table_name,
-            "CONFIG_BUCKET": "",  # Set at deploy time
+            "CONFIG_BUCKET": f"healthsignals-data-{self.account}-{self.region}",
             "CONFIG_PREFIX": "config/",
             "LOG_LEVEL": "INFO",
-            "API_BASE_URL": "",  # Set after API Gateway creation
             "TOKEN_SECRET_ARN": self.token_secret.secret_arn,
             "ENVIRONMENT": "production",
         }
@@ -126,6 +133,12 @@ class SubscriptionStack(Stack):
                     resources=[f"arn:aws:ses:{self.region}:{self.account}:identity/*"],
                 )
             )
+            fn.add_to_role_policy(
+                iam.PolicyStatement(
+                    actions=["s3:GetObject"],
+                    resources=[f"arn:aws:s3:::healthsignals-data-{self.account}-{self.region}/config/*"],
+                )
+            )
 
         # --- API Gateway ---
         self.api = apigw.RestApi(
@@ -138,44 +151,21 @@ class SubscriptionStack(Stack):
 
         subscription_resource = self.api.root.add_resource("subscription")
 
-        # POST /subscription/subscribe
         subscribe_resource = subscription_resource.add_resource("subscribe")
-        subscribe_resource.add_method(
-            "POST",
-            apigw.LambdaIntegration(self.subscribe_fn),
-        )
+        subscribe_resource.add_method("POST", apigw.LambdaIntegration(self.subscribe_fn))
 
-        # GET /subscription/verify
         verify_resource = subscription_resource.add_resource("verify")
-        verify_resource.add_method(
-            "GET",
-            apigw.LambdaIntegration(self.verify_fn),
-        )
+        verify_resource.add_method("GET", apigw.LambdaIntegration(self.verify_fn))
 
-        # GET+POST /subscription/unsubscribe
         unsubscribe_resource = subscription_resource.add_resource("unsubscribe")
-        unsubscribe_resource.add_method(
-            "GET",
-            apigw.LambdaIntegration(self.unsubscribe_fn),
-        )
-        unsubscribe_resource.add_method(
-            "POST",
-            apigw.LambdaIntegration(self.unsubscribe_fn),
-        )
+        unsubscribe_resource.add_method("GET", apigw.LambdaIntegration(self.unsubscribe_fn))
+        unsubscribe_resource.add_method("POST", apigw.LambdaIntegration(self.unsubscribe_fn))
 
-        # PUT /subscription/preferences
         preferences_resource = subscription_resource.add_resource("preferences")
-        preferences_resource.add_method(
-            "PUT",
-            apigw.LambdaIntegration(self.update_fn),
-        )
+        preferences_resource.add_method("PUT", apigw.LambdaIntegration(self.update_fn))
 
-        # GET /subscription/status
         status_resource = subscription_resource.add_resource("status")
-        status_resource.add_method(
-            "GET",
-            apigw.LambdaIntegration(self.status_fn),
-        )
+        status_resource.add_method("GET", apigw.LambdaIntegration(self.status_fn))
 
     def _create_lambda(self, id: str, handler_path: str, env: dict) -> _lambda.Function:
         """Create a Lambda function with standard configuration."""
@@ -187,5 +177,6 @@ class SubscriptionStack(Stack):
             code=_lambda.Code.from_asset(handler_path),
             timeout=Duration.seconds(30),
             memory_size=256,
+            layers=[self.shared_layer],
             environment=env,
         )

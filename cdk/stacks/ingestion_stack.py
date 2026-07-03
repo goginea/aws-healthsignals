@@ -98,7 +98,7 @@ class IngestionStack(Stack):
             self,
             "SharedUtilsLayer",
             layer_version_name="healthsignals-shared-utils",
-            code=_lambda.Code.from_asset("../lambdas/shared"),
+            code=_lambda.Code.from_asset("../layers/shared"),
             compatible_runtimes=[_lambda.Runtime.PYTHON_3_11],
             description=(
                 "Shared utilities for HealthSignals Lambdas: "
@@ -110,6 +110,7 @@ class IngestionStack(Stack):
         self.delphi_fetcher = _lambda.Function(
             self,
             "DelphiFetcher",
+            function_name="healthsignals-delphi-fetcher",
             runtime=_lambda.Runtime.PYTHON_3_11,
             code=_lambda.Code.from_asset("../lambdas/ingestion/delphi_fetcher"),
             handler="handler.lambda_handler",
@@ -123,7 +124,7 @@ class IngestionStack(Stack):
                 "DELPHI_API_BASE": "https://api.delphi.cmu.edu/epidata/covidcast/",
             },
         )
-        self.data_bucket.grant_write(self.delphi_fetcher)
+        self.data_bucket.grant_read_write(self.delphi_fetcher)
         # SQS triggers Lambda (with batch size 1 — each message = one full ingestion run)
         self.delphi_fetcher.add_event_source(
             lambda_event_sources.SqsEventSource(
@@ -137,6 +138,7 @@ class IngestionStack(Stack):
         self.cdc_wastewater_fetcher = _lambda.Function(
             self,
             "CDCWastewaterFetcher",
+            function_name="healthsignals-cdc-wastewater-fetcher",
             runtime=_lambda.Runtime.PYTHON_3_11,
             code=_lambda.Code.from_asset("../lambdas/ingestion/cdc_wastewater_fetcher"),
             handler="handler.lambda_handler",
@@ -149,7 +151,7 @@ class IngestionStack(Stack):
                 "CONFIG_PREFIX": "config/",
             },
         )
-        self.data_bucket.grant_write(self.cdc_wastewater_fetcher)
+        self.data_bucket.grant_read_write(self.cdc_wastewater_fetcher)
         self.cdc_wastewater_fetcher.add_event_source(
             lambda_event_sources.SqsEventSource(
                 self.wastewater_queue,
@@ -162,6 +164,7 @@ class IngestionStack(Stack):
         self.cdc_respiratory_fetcher = _lambda.Function(
             self,
             "CDCRespiratoryFetcher",
+            function_name="healthsignals-cdc-respiratory-fetcher",
             runtime=_lambda.Runtime.PYTHON_3_11,
             code=_lambda.Code.from_asset("../lambdas/ingestion/cdc_respiratory_fetcher"),
             handler="handler.lambda_handler",
@@ -174,7 +177,7 @@ class IngestionStack(Stack):
                 "CONFIG_PREFIX": "config/",
             },
         )
-        self.data_bucket.grant_write(self.cdc_respiratory_fetcher)
+        self.data_bucket.grant_read_write(self.cdc_respiratory_fetcher)
         self.cdc_respiratory_fetcher.add_event_source(
             lambda_event_sources.SqsEventSource(
                 self.respiratory_queue,

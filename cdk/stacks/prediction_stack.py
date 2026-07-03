@@ -3,6 +3,7 @@
 Deploys:
 - DynamoDB tables (county configs, alert state, calibration history)
 - Three Lambda functions for the prediction pipeline
+- Shared Lambda Layer for config_loader
 - IAM roles with least-privilege access
 """
 from aws_cdk import (
@@ -19,6 +20,16 @@ from constructs import Construct
 class PredictionStack(Stack):
     def __init__(self, scope: Construct, construct_id: str, **kwargs) -> None:
         super().__init__(scope, construct_id, **kwargs)
+
+        # --- Shared Lambda Layer ---
+        self.shared_layer = _lambda.LayerVersion(
+            self,
+            "SharedUtilsLayer",
+            layer_version_name="healthsignals-shared-prediction",
+            code=_lambda.Code.from_asset("../layers/shared"),
+            compatible_runtimes=[_lambda.Runtime.PYTHON_3_11],
+            description="Shared utilities: config_loader, token_utils",
+        )
 
         # --- DynamoDB: County Configuration Table ---
         self.county_config_table = dynamodb.Table(
@@ -73,9 +84,12 @@ class PredictionStack(Stack):
             handler="handler.lambda_handler",
             timeout=Duration.minutes(2),
             memory_size=512,
+            layers=[self.shared_layer],
             environment={
                 "CALIBRATION_TABLE": self.calibration_table.table_name,
                 "ALERT_STATE_TABLE": self.alert_state_table.table_name,
+                "CONFIG_BUCKET": f"healthsignals-data-{self.account}-{self.region}",
+                "CONFIG_PREFIX": "config/",
             },
         )
         self.calibration_table.grant_read_data(self.leader_detection)
@@ -91,8 +105,11 @@ class PredictionStack(Stack):
             handler="handler.lambda_handler",
             timeout=Duration.minutes(2),
             memory_size=256,
+            layers=[self.shared_layer],
             environment={
                 "COUNTY_CONFIG_TABLE": self.county_config_table.table_name,
+                "CONFIG_BUCKET": f"healthsignals-data-{self.account}-{self.region}",
+                "CONFIG_PREFIX": "config/",
             },
         )
         self.county_config_table.grant_read_data(self.geographic_affinity)
@@ -107,10 +124,33 @@ class PredictionStack(Stack):
             handler="handler.lambda_handler",
             timeout=Duration.minutes(2),
             memory_size=256,
+            layers=[self.shared_layer],
             environment={
                 "CALIBRATION_TABLE": self.calibration_table.table_name,
                 "COUNTY_CONFIG_TABLE": self.county_config_table.table_name,
+                "CONFIG_BUCKET": f"healthsignals-data-{self.account}-{self.region}",
+                "CONFIG_PREFIX": "config/",
             },
         )
         self.calibration_table.grant_read_data(self.timing_estimation)
         self.county_config_table.grant_read_data(self.timing_estimation)
+
+        # Grant S3 read for config access
+        self.leader_detection.add_to_role_policy(
+            iam.PolicyStatement(
+                actions=["s3:GetObject"],
+                resources=[f"arn:aws:s3:::healthsignals-data-{self.account}-{self.region}/config/*"],
+            )
+        )
+        self.geographic_affinity.add_to_role_policy(
+            iam.PolicyStatement(
+                actions=["s3:GetObject"],
+                resources=[f"arn:aws:s3:::healthsignals-data-{self.account}-{self.region}/config/*"],
+            )
+        )
+        self.timing_estimation.add_to_role_policy(
+            iam.PolicyStatement(
+                actions=["s3:GetObject"],
+                resources=[f"arn:aws:s3:::healthsignals-data-{self.account}-{self.region}/config/*"],
+            )
+        )
