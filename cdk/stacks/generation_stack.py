@@ -33,8 +33,8 @@ class GenerationStack(Stack):
             iam.PolicyStatement(
                 actions=["bedrock:InvokeModel"],
                 resources=[
-                    f"arn:aws:bedrock:{self.region}::foundation-model/anthropic.claude-3-haiku-20240307-v1:0",
-                    f"arn:aws:bedrock:{self.region}::foundation-model/anthropic.claude-3-5-sonnet-20241022-v2:0",
+                    f"arn:aws:bedrock:{self.region}::foundation-model/us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+                    f"arn:aws:bedrock:{self.region}::foundation-model/us.anthropic.claude-sonnet-5",
                 ],
             )
         )
