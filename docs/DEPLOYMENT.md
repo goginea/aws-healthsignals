@@ -1,92 +1,73 @@
-# Deployment Guide
+# Deployment Guide — Amazon HealthSignals
 
 ## Prerequisites
 
-### AWS Account Requirements
-- AWS account with billing enabled
-- IAM user/role with CDK deployment permissions
-- **Bedrock model access** — request access in Bedrock Console → Model Access:
-  - Claude Sonnet 4.5 (`anthropic.claude-sonnet-4-5-20250929-v1:0`)
-  - Claude Sonnet 5 (`anthropic.claude-sonnet-5`)
-  - Access is region-specific — request in `us-east-1`
-  - ⚠️ Models must be **active** (not Legacy). Check: `aws bedrock list-foundation-models --by-provider Anthropic`
-- SES verified sender identity (email address or domain)
-- SNS SMS sending capabilities (may require support ticket for production)
+- **AWS Account** with admin access
+- **AWS CLI** configured (`aws sts get-caller-identity` returns your account)
+- **Node.js 20+** and **Python 3.11+**
+- **Bedrock Model Access**: Enable Claude Sonnet 4.5 and Claude Sonnet 5 in the [Bedrock console](https://console.aws.amazon.com/bedrock/home#/modelaccess)
+- **CDK CLI**: `npm install -g aws-cdk` or use `npx aws-cdk`
 
-### Local Requirements
-- Python 3.11+
-- Node.js 20+ (for CDK CLI)
-- AWS CDK v2 (`npm install -g aws-cdk` or use `npx aws-cdk`)
-- AWS CLI configured (`aws configure`)
-- Git
+## Deployment Steps
 
-## Step-by-Step Deployment
-
-### 1. Clone and Setup
+### Step 1: Install CDK Dependencies
 
 ```bash
-git clone https://github.com/goginea/aws-healthsignals.git
 cd aws-healthsignals/cdk
-
-# Create virtual environment
-python -m venv .venv
-source .venv/bin/activate  # Linux/Mac
-
-# Install dependencies
 pip install -r requirements.txt
 ```
 
-### 2. Bootstrap CDK (first time only)
+### Step 2: Bootstrap CDK (first time only)
 
 ```bash
-cdk bootstrap aws://ACCOUNT_ID/us-east-1
+npx aws-cdk bootstrap aws://ACCOUNT_ID/us-east-1
 ```
 
-### 3. Deploy All 7 Stacks
+### Step 3: Deploy All Stacks
 
 ```bash
-# Deploy all stacks with dependency ordering
 npx aws-cdk deploy --all --require-approval never
 ```
 
-Individual stacks (in dependency order):
+This deploys 7 stacks in dependency order:
+1. `HealthSignals-Ingestion` — S3 bucket, SQS queues, 3 fetcher Lambdas, EventBridge schedule
+2. `HealthSignals-Prediction` — DynamoDB tables, 3 prediction Lambdas
+3. `HealthSignals-Generation` — Step Functions state machine, Bedrock IAM
+4. `HealthSignals-Orchestration` — Pipeline coordinator, pipeline_runs table, S3 event trigger
+5. `HealthSignals-Delivery` — SES/SNS, alert dispatcher, feedback collector/recalibrator
+6. `HealthSignals-Subscription` — API Gateway, 5 subscription Lambdas, Secrets Manager
+7. `HealthSignals-Monitoring` — CloudWatch dashboards, alarms, SNS ops topic
+
+### Step 4: Upload Config to S3 (CRITICAL — must be done before any Lambda invocation)
+
 ```bash
-npx aws-cdk deploy HealthSignals-Ingestion        # S3 + SQS + DLQ + fetcher Lambdas + EventBridge
-npx aws-cdk deploy HealthSignals-Prediction       # DynamoDB tables + prediction Lambdas
-npx aws-cdk deploy HealthSignals-Generation       # Step Functions + Bedrock IAM
-npx aws-cdk deploy HealthSignals-Orchestration    # Pipeline coordinator + S3 trigger
-npx aws-cdk deploy HealthSignals-Delivery         # SES/SNS + alert dispatcher
-npx aws-cdk deploy HealthSignals-Subscription     # API Gateway + subscription Lambdas
-npx aws-cdk deploy HealthSignals-Monitoring       # CloudWatch dashboards + alarms
+cd aws-healthsignals  # repo root
+aws s3 sync config/ s3://healthsignals-data-ACCOUNT_ID-us-east-1/config/
 ```
 
-### 4. Upload Config to S3 (CRITICAL — do this BEFORE invoking any Lambda)
-
-⚠️ **All Lambdas will fail with `ConfigLoadError` if config is not in S3.**
+### Step 5: Upload Knowledge Base Documents
 
 ```bash
-# From the repo root (not cdk/)
-cd ~/Documents/dev/aws-healthsignals
-aws s3 sync config/ s3://healthsignals-data-ACCOUNT-REGION/config/ \
-  --exclude "_template.json" --exclude "*.pyc" --exclude "__pycache__/*"
+aws s3 sync bedrock/knowledge_bases/ s3://healthsignals-data-ACCOUNT_ID-us-east-1/knowledge_bases/
 ```
 
-### 5. Grant Bedrock IAM Permissions for Inference Profiles
+Then create Bedrock Knowledge Bases in the console pointing at these S3 paths:
+- CDC Guidelines KB → `s3://healthsignals-data-ACCOUNT_ID-us-east-1/knowledge_bases/cdc_guidelines/`
+- Communication Templates KB → `s3://healthsignals-data-ACCOUNT_ID-us-east-1/knowledge_bases/communication_templates/`
 
-⚠️ **The CDK-deployed IAM policy may not cover cross-region inference profiles.**
-Inference profiles (model IDs starting with `us.`) route to multiple regions. The Step Functions
-role needs `bedrock:InvokeModel` on `"*"` to support cross-region routing:
+### Step 6: Grant Bedrock IAM for Inference Profiles
+
+Cross-region inference profiles route to multiple AWS regions. The Step Functions role needs broad Bedrock access:
 
 ```bash
-# Find the SFN role name
-ROLE_NAME=$(aws cloudformation describe-stack-resources \
+# Get the SFN role name
+ROLE_NAME=$(aws cloudformation describe-stack-resource \
   --stack-name HealthSignals-Generation \
-  --query "StackResources[?LogicalResourceId=='BedrockInvocationRole'].PhysicalResourceId" \
-  --output text)
+  --logical-resource-id BedrockInvocationRole \
+  --query 'StackResourceDetail.PhysicalResourceId' --output text | sed 's|.*/||')
 
-# Grant broad Bedrock access (required for cross-region inference profiles)
 aws iam put-role-policy \
-  --role-name $ROLE_NAME \
+  --role-name "$ROLE_NAME" \
   --policy-name BedrockInferenceProfileAccess \
   --policy-document '{
     "Version": "2012-10-17",
@@ -96,200 +77,193 @@ aws iam put-role-policy \
       "Resource": ["*"]
     }]
   }'
+```
 
-# Also grant the SFN role permission to invoke the alert dispatcher Lambda
+Also grant the SFN role permission to invoke the alert dispatcher:
+
+```bash
 aws iam put-role-policy \
-  --role-name $ROLE_NAME \
+  --role-name "$ROLE_NAME" \
   --policy-name LambdaInvokeDispatcher \
   --policy-document '{
     "Version": "2012-10-17",
     "Statement": [{
       "Effect": "Allow",
       "Action": ["lambda:InvokeFunction"],
-      "Resource": ["arn:aws:lambda:us-east-1:ACCOUNT:function:healthsignals-alert-dispatcher"]
+      "Resource": ["arn:aws:lambda:us-east-1:'$ACCOUNT_ID':function:healthsignals-alert-dispatcher"]
     }]
   }'
 ```
 
-### 6. Create Bedrock Knowledge Bases
+### Step 7: Grant S3 Read to Prediction Lambdas
 
-Upload KB documents to S3 and create Knowledge Bases in the Bedrock console:
-
-```bash
-# CDC Guidelines KB
-aws s3 mb s3://healthsignals-kb-cdc-guidelines-ACCOUNT
-aws s3 sync bedrock/knowledge_bases/cdc_guidelines/ \
-  s3://healthsignals-kb-cdc-guidelines-ACCOUNT/ --exclude "README.md"
-
-# Communication Templates KB
-aws s3 mb s3://healthsignals-kb-comms-templates-ACCOUNT
-aws s3 sync bedrock/knowledge_bases/communication_templates/ \
-  s3://healthsignals-kb-comms-templates-ACCOUNT/ --exclude "README.md"
-```
-
-Then in Bedrock Console → Knowledge Bases → Create:
-1. **CDC Guidelines KB**: Name `healthsignals-cdc-guidelines`, semantic chunking, Titan Embeddings V2
-2. **Communication Templates KB**: Name `healthsignals-communication-templates`, fixed chunking (1000 tokens, 200 overlap), Titan Embeddings V2
-
-Update `config/system.json` with the Knowledge Base IDs and re-upload to S3.
-
-### 7. Create Token Signing Secret
-
-For the subscription API's HMAC-signed tokens:
+The prediction Lambdas read config from S3:
 
 ```bash
-aws secretsmanager create-secret \
-  --name healthsignals/token-signing-key \
-  --secret-string "$(openssl rand -hex 32)"
+for FUNC in healthsignals-leader-detection healthsignals-geographic-affinity healthsignals-timing-estimation; do
+  ROLE=$(aws lambda get-function --function-name $FUNC --query 'Configuration.Role' --output text | sed 's|.*/||')
+  aws iam put-role-policy --role-name "$ROLE" --policy-name S3ConfigRead \
+    --policy-document '{
+      "Version": "2012-10-17",
+      "Statement": [{"Effect": "Allow", "Action": ["s3:GetObject","s3:ListBucket"], "Resource": ["arn:aws:s3:::healthsignals-data-'$ACCOUNT_ID'-us-east-1","arn:aws:s3:::healthsignals-data-'$ACCOUNT_ID'-us-east-1/*"]}]
+    }'
+done
 ```
 
-### 8. Verify SES Sender
+### Step 8: Seed Calibration Data
 
 ```bash
-aws ses verify-email-identity --email-address alerts@yourdomain.com
-# Check inbox and click verification link
+python scripts/seed_calibration_data.py --seasons 3
 ```
 
-### 9. Seed Calibration Data
+This backfills 3 seasons of historical lag/severity data from the Delphi API into DynamoDB.
 
-Populates DynamoDB with 3 seasons of historical lag data from the Delphi API:
+### Step 9: Verify Data Ingestion
 
 ```bash
-cd scripts
-python seed_calibration_data.py --seasons 3 --region us-east-1
+aws lambda invoke --function-name healthsignals-delphi-fetcher --payload '{}' /dev/stdout
 ```
 
-⚠️ **Note:** The Delphi API uses `geo_type=county` and `time_type=week` (epiweek format YYYYWW).
-If the script returns 0 records, verify the API is accessible: `curl "https://api.delphi.cmu.edu/epidata/covidcast/?data_source=nssp&signal=pct_ed_visits_influenza&geo_type=county&geo_value=48201&time_type=week&time_values=202439-202524"`
+Should return `statusCode: 200` with 12 signals fetched (3 diseases × 4 metros).
 
-### 10. Test the Pipeline
+### Step 10: Verify SES Sender (for email delivery)
 
 ```bash
-# Trigger manual ingestion
-aws lambda invoke --function-name healthsignals-delphi-fetcher \
-  --payload '{}' /dev/stdout
-
-# Verify data landed in S3
-aws s3 ls s3://healthsignals-data-ACCOUNT-REGION/raw/delphi/ --recursive
-
-# Test full pipeline (create payload file first)
-cat > /tmp/test-payload.json << 'EOF'
-{"source":"manual","state_key":"texas","disease_key":"influenza","week":"202645"}
-EOF
-
-aws lambda invoke --function-name healthsignals-pipeline-coordinator \
-  --payload fileb:///tmp/test-payload.json /dev/stdout
+aws ses verify-email-identity --email-address your-alerts@yourdomain.com
 ```
 
-### 11. Verify End-to-End
-
-```bash
-# Check CloudWatch Dashboard
-# Navigate: CloudWatch → Dashboards → "HealthSignals-Operations"
-
-# Verify EventBridge rules
-aws events list-rules --name-prefix "HealthSignals"
-
-# Check Step Functions executions
-aws stepfunctions list-executions \
-  --state-machine-arn arn:aws:states:us-east-1:ACCOUNT:stateMachine:healthsignals-alert-generation \
-  --max-results 5 --query 'executions[].{name:name,status:status}'
-```
+---
 
 ## Adding a New State After Deployment
 
-No redeployment needed — config only:
+No code changes needed — just config:
 
 ```bash
-# 1. Create state config
+# 1. Create state config (copy template, fill in metros + counties)
 cp config/states/_template.json config/states/florida.json
-# Edit florida.json with metros (include primary_county_fips for each), counties, contacts
+# Edit florida.json with FL metros, counties, contacts
 
 # 2. Upload to S3
-aws s3 cp config/states/florida.json \
-  s3://healthsignals-data-ACCOUNT-REGION/config/states/florida.json
+aws s3 cp config/states/florida.json s3://healthsignals-data-ACCOUNT_ID-us-east-1/config/states/florida.json
 
-# 3. Seed calibration data for the new state's metros
-python scripts/seed_calibration_data.py --state florida --seasons 3
+# 3. Seed calibration data for the new state
+python scripts/seed_calibration_data.py --seasons 3
 ```
 
-The pipeline coordinator will automatically detect and monitor the new state on its next run.
+The system auto-discovers new states on the next execution (config is loaded at Lambda cold start).
+
+---
 
 ## Lambda Layer Structure
 
-Shared code (config_loader, token_utils) is deployed as a Lambda Layer:
+The shared utilities (config_loader, token_utils) are deployed as a Lambda Layer:
 
 ```
-layers/shared/python/shared/
-├── __init__.py
-├── config_loader.py
-└── token_utils.py
+layers/shared/
+└── python/
+    └── shared/
+        ├── __init__.py
+        ├── config_loader.py
+        └── token_utils.py
 ```
 
-This follows Python Lambda Layer convention: files under `python/` are automatically on Lambda's path at `/opt/python/`. Handlers import via `from shared.config_loader import ...`.
+In Lambda runtime, files are at `/opt/python/shared/`. Import with: `from shared.config_loader import ...`
 
-The source at `lambdas/shared/` is for **local development/testing only** — the deployed Lambda uses the Layer.
+---
+
+## Bedrock Models
+
+| Step | Model | Inference Profile ID |
+|------|-------|---------------------|
+| Situation Brief | Claude Sonnet 4.5 | `us.anthropic.claude-sonnet-4-5-20250929-v1:0` |
+| Severity Classification | Claude Sonnet 4.5 | `us.anthropic.claude-sonnet-4-5-20250929-v1:0` |
+| Preparation Checklist (routine) | Claude Sonnet 4.5 | `us.anthropic.claude-sonnet-4-5-20250929-v1:0` |
+| Preparation Checklist (high-severity) | Claude Sonnet 5 | `us.anthropic.claude-sonnet-5` |
+| Communication Drafting | Claude Sonnet 4.5 | `us.anthropic.claude-sonnet-4-5-20250929-v1:0` |
+
+All requests include `"thinking": {"type": "disabled"}` to prevent extended thinking blocks that break Step Functions JSONPath references.
+
+---
 
 ## Troubleshooting
 
-### "ConfigLoadError: Failed to load s3://..."
-- **Cause:** Config not uploaded to S3, or Lambda doesn't have S3 read permission
-- **Fix:** Run `aws s3 sync config/ s3://healthsignals-data-ACCOUNT-REGION/config/`
-- Verify Lambda role has `s3:GetObject` on the bucket
+### `ConfigLoadError: Failed to load s3://...`
+Lambda can't read config from S3. Either:
+- Config not uploaded: `aws s3 sync config/ s3://BUCKET/config/`
+- Lambda role lacks S3 read: Add `s3:GetObject` + `s3:ListBucket` permission
 
-### CDK says "no changes" but handler code was modified
-- **Cause:** CDK caches asset hashes. Local file timestamp changes don't always trigger repackaging.
-- **Fix:** `rm -rf cdk.out && npx aws-cdk deploy STACK_NAME`
-- Alternative: update Lambda directly: `zip -r /tmp/fn.zip handler.py && aws lambda update-function-code --function-name NAME --zip-file fileb:///tmp/fn.zip`
-
-### "Model is marked by provider as Legacy"
-- **Cause:** Using an old model ID that Anthropic has deprecated
-- **Fix:** Update ASL to use current inference profile IDs (`us.anthropic.claude-sonnet-4-5-*` or `us.anthropic.claude-sonnet-5`)
-- Check available models: `aws bedrock list-inference-profiles --query "inferenceProfileSummaries[?contains(inferenceProfileId,'anthropic')].{id:inferenceProfileId,status:status}"`
-
-### "Invocation of model ID with on-demand throughput isn't supported"
-- **Cause:** Using a foundation model ID directly instead of an inference profile
-- **Fix:** Prefix model IDs with `us.` (e.g., `us.anthropic.claude-sonnet-4-5-20250929-v1:0`)
-
-### "bedrock:InvokeModel AccessDeniedException" on us-east-2 or other region
-- **Cause:** Cross-region inference profiles route to multiple regions. IAM policy only allows us-east-1.
-- **Fix:** Grant `bedrock:InvokeModel` on `"*"` (required for cross-region inference profile routing)
-
-### Lambda uses cached/stale config
-- **Cause:** Config loader caches configs in Lambda memory (warm start reuse)
-- **Fix:** Force cold start by updating any environment variable:
-  ```bash
-  aws lambda update-function-configuration --function-name FUNCTION_NAME \
-    --environment '{"Variables":{"CACHE_BUST":"2",...existing vars...}}'
-  ```
-
-### "No metro signals available" in pipeline coordinator
-- **Cause:** S3 data files are keyed by county FIPS (e.g., `48201.json`) but coordinator was looking for MSA code
-- **Fix:** Ensure state config has `primary_county_fips` for each metro, and coordinator uses it for S3 lookup
-
-### Step Functions "States.Runtime" error on CommunicationDrafting
-- **Cause:** Newer Claude models return extended thinking blocks (`content[0].type = "thinking"`) which break JSONPath `$.content[0].text`
-- **Fix:** Add `"thinking": {"type": "disabled"}` to all InvokeModel request bodies in the ASL
-
-## Teardown
-
+### CDK says "no changes" after modifying handler code
+CDK caches asset hashes. Force refresh:
 ```bash
-cd cdk
-npx aws-cdk destroy --all
+rm -rf cdk.out
+npx aws-cdk deploy STACK_NAME --require-approval never
+```
+If still cached, update Lambda directly:
+```bash
+cd lambdas/PATH/TO/HANDLER
+zip -r /tmp/handler.zip handler.py requirements.txt
+aws lambda update-function-code --function-name FUNCTION_NAME --zip-file fileb:///tmp/handler.zip
 ```
 
-**Note:** DynamoDB tables and S3 buckets have `RETAIN` removal policy — remove manually:
+### `Bedrock.ResourceNotFoundException: Model is marked as Legacy`
+The model ID is deprecated. Update to current inference profile IDs in `stepfunctions/alert_generation.asl.json`. Check available models:
 ```bash
-aws dynamodb delete-table --table-name healthsignals-county-configs
-aws dynamodb delete-table --table-name healthsignals-alert-state
-aws dynamodb delete-table --table-name healthsignals-calibration
-aws dynamodb delete-table --table-name healthsignals-pipeline-runs
-aws dynamodb delete-table --table-name healthsignals-subscriptions
-aws dynamodb delete-table --table-name healthsignals-feedback
-aws s3 rb s3://healthsignals-data-ACCOUNT-REGION --force
+aws bedrock list-inference-profiles --query "inferenceProfileSummaries[?status=='ACTIVE'].inferenceProfileId"
 ```
 
-## Cost Monitoring
+### `Bedrock.ValidationException: Retry with inference profile`
+Newer models require inference profile format (`us.anthropic.claude-*`), not direct model IDs (`anthropic.claude-*`).
 
-Set up a Cost Allocation Tag (`project: healthsignals`) and create a Cost Explorer filter.
-Expected monthly cost for 100 counties: $150–300/month (primarily Bedrock token costs with Sonnet 4.5).
+### `Bedrock.AccessDeniedException` on cross-region resource
+Inference profiles route to multiple regions. IAM must grant `bedrock:InvokeModel` on `"*"` (can't enumerate all region-specific ARNs).
+
+### `States.Runtime` error in Step Functions (JSONPath)
+Model returned extended thinking blocks. Ensure all InvokeModel steps have `"thinking": {"type": "disabled"}` in the request body.
+
+### Lambda uses stale config (cached from previous invocation)
+Force a cold start by updating any environment variable:
+```bash
+aws lambda update-function-configuration --function-name FUNC_NAME --environment '{"Variables":{"CACHE_BUST":"'$(date +%s)'"}}'
+```
+
+### `No metro signals available` in pipeline coordinator
+The coordinator reads data from S3 using `primary_county_fips` from state config. Ensure:
+1. Delphi fetcher has run at least once
+2. State config has `primary_county_fips` for each metro
+3. S3 keys match: `raw/delphi/nssp/pct_ed_visits_influenza/YYYY/WXX/COUNTY_FIPS.json`
+
+---
+
+## End-to-End Testing
+
+After deployment, validate the full pipeline with one command:
+
+```bash
+chmod +x scripts/test_end_to_end.sh
+./scripts/test_end_to_end.sh
+```
+
+This script:
+1. Temporarily lowers the flu threshold to 0.01% (triggers on any real data)
+2. Clears alert state to allow a fresh detection
+3. Invokes the pipeline coordinator
+4. Polls Step Functions until Bedrock completes all 4 generation steps
+5. Reports PASS/FAIL with alert content preview
+6. **Automatically restores** the original threshold (even on failure)
+
+**Duration:** ~45 seconds  
+**Cost:** ~$0.10 in Bedrock tokens (one Sonnet 4.5 + one Sonnet 5 invocation)
+
+**What it validates:**
+- ✅ Data ingestion (reads from S3 data lake)
+- ✅ Leader detection (threshold crossing with config-driven thresholds)
+- ✅ Geographic affinity (county mapping from state config)
+- ✅ Timing estimation (lag/severity from calibration data)
+- ✅ Bedrock AI generation (situation brief → severity → checklist → communications)
+- ✅ Alert dispatch (invokes delivery Lambda)
+
+**Common test failure causes:**
+- `ConfigLoadError`: Config not uploaded → `aws s3 sync config/ s3://BUCKET/config/`
+- `Bedrock.AccessDeniedException`: IAM needs `bedrock:InvokeModel` on `"*"`
+- `No alerts triggered`: No Delphi data in S3 → run fetcher first
+- `States.Runtime` JSONPath error: Thinking blocks → ensure `thinking: disabled` in ASL
