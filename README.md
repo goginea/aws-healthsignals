@@ -115,30 +115,48 @@ All public, no PHI, no HIPAA, no data sharing agreements. See [docs/DATA_SOURCES
 
 ## Quickstart
 
+**Prerequisites:**
+- AWS account with [Bedrock model access](https://console.aws.amazon.com/bedrock/home#/modelaccess) enabled for Claude Sonnet 4.5 and Sonnet 5
+- AWS CDK v2, Python 3.11+, Node.js 20+
+- AWS CLI configured with credentials
+
 ```bash
 # 1. Clone
 git clone https://github.com/goginea/aws-healthsignals.git
 cd aws-healthsignals
 
-# 2. Deploy infrastructure (7 CDK stacks)
+# 2. Deploy infrastructure (7 CDK stacks — takes ~5 minutes first time)
 cd cdk && pip install -r requirements.txt
 npx aws-cdk bootstrap aws://ACCOUNT_ID/us-east-1
-npx aws-cdk deploy --all
+npx aws-cdk deploy --all --require-approval never
+cd ..
 
-# 3. Upload config to S3
-aws s3 sync config/ s3://healthsignals-data-ACCOUNT-REGION/config/
+# 3. Upload config to S3 (MUST do before any Lambda invocation)
+aws s3 sync config/ s3://healthsignals-data-ACCOUNT_ID-us-east-1/config/
 
-# 4. Create Bedrock Knowledge Bases (upload docs to S3, create KBs in console)
-aws s3 sync bedrock/knowledge_bases/cdc_guidelines/ s3://healthsignals-kb-cdc/
-aws s3 sync bedrock/knowledge_bases/communication_templates/ s3://healthsignals-kb-comms/
+# 4. Upload Knowledge Base documents to S3
+aws s3 sync bedrock/knowledge_bases/ s3://healthsignals-data-ACCOUNT_ID-us-east-1/knowledge_bases/
 
 # 5. Seed historical calibration data (3 seasons)
 python scripts/seed_calibration_data.py --seasons 3
 
-# 6. Subscribe test county
-curl -X POST https://API_ID.execute-api.REGION.amazonaws.com/prod/subscribe \
+# 6. Grant Bedrock cross-region inference profile permissions
+#    (Required until CDK is updated — see docs/DEPLOYMENT.md for details)
+aws iam put-role-policy --role-name <SFN_ROLE_NAME> \
+  --policy-name BedrockAccess \
+  --policy-document '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["bedrock:InvokeModel"],"Resource":["*"]}]}'
+
+# 7. Test: invoke the Delphi fetcher
+aws lambda invoke --function-name healthsignals-delphi-fetcher --payload '{}' /dev/stdout
+
+# 8. (Optional) Subscribe a test county
+curl -X POST https://API_ID.execute-api.us-east-1.amazonaws.com/prod/subscribe \
   -d '{"county_fips":"48143","county_name":"Erath County","state":"texas","contact_name":"Test","contact_email":"you@example.com","diseases":["influenza","rsv","covid"]}'
 ```
+
+> **Note:** Replace `ACCOUNT_ID` with your AWS account ID (e.g., `767900122304`).
+> The system monitors weekly and alerts only when flu season thresholds are crossed (typically Oct–Feb).
+> See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for the full deployment guide with troubleshooting.
 
 ## CDK Stacks
 
