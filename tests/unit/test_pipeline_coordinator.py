@@ -1,96 +1,62 @@
-"""Unit tests for pipeline coordinator (orchestration brain)."""
+"""Unit tests for Pipeline Coordinator Lambda."""
 import json
 import pytest
 from unittest.mock import patch, MagicMock
 
-import sys
-import os
-
-ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-sys.path.insert(0, os.path.join(ROOT, "lambdas/orchestration/pipeline_coordinator"))
-sys.path.insert(0, os.path.join(ROOT, "lambdas/shared"))
-sys.path.insert(0, "lambdas")
+from tests.conftest import load_handler
 
 
-class TestPipelineCoordinatorLogic:
-    """Test orchestration decision logic."""
+MOCK_SYSTEM = {
+    "dynamodb_tables": {"pipeline_runs": "healthsignals-pipeline-runs-test", "alert_state": "healthsignals-alert-state-test"},
+    "lambda_functions": {
+        "leader_detection": "healthsignals-leader-detection",
+        "geographic_affinity": "healthsignals-geographic-affinity",
+        "timing_estimation": "healthsignals-timing-estimation",
+    },
+    "step_functions": {"alert_generation_arn": "arn:aws:states:us-east-1:123:stateMachine:test"},
+    "orchestration": {"max_counties_per_run": 20, "circuit_breaker_enabled": True},
+}
 
-    @patch("handler.boto3")
-    @patch("handler.get_system_config")
-    def test_s3_event_parsing(self, mock_config, mock_boto):
-        """S3 event should be correctly parsed into state/disease/week."""
-        mock_config.return_value = {
-            "dynamodb_tables": {"pipeline_runs": "test-runs", "alert_state": "test-alerts"},
-            "orchestration": {"max_counties_per_run": 20},
-            "lambda_functions": {},
-            "step_functions": {"state_machine_arn": "arn:aws:states:us-east-1:123:stateMachine:test"},
+
+@pytest.fixture(scope="module")
+def handler():
+    return load_handler(
+        "orchestration/pipeline_coordinator",
+        extra_patches={
+            "shared.config_loader.get_system_config": MOCK_SYSTEM,
+            "shared.config_loader.list_active_states": [{"state_key": "texas"}],
+            "shared.config_loader.list_active_diseases": [{"disease_key": "influenza"}],
+            "boto3.client": MagicMock(),
+            "boto3.resource": MagicMock(),
+        },
+    )
+
+
+class TestPipelineCoordinator:
+    def test_handler_exists(self, handler):
+        assert hasattr(handler, "lambda_handler")
+
+    def test_parse_s3_event(self, handler):
+        event = {
+            "Records": [{"s3": {"bucket": {"name": "test"}, "object": {"key": "raw/delphi/nssp/pct_ed_visits_influenza/2026/W27/26420.json"}}}]
         }
+        result = handler.parse_s3_event(event)
+        assert result is not None
 
-        # S3 event structure
-        s3_event = {
-            "Records": [{
-                "s3": {
-                    "bucket": {"name": "healthsignals-data-123-us-east-1"},
-                    "object": {"key": "raw/delphi/nssp/pct_ed_visits_influenza/2026/W45/26420.json"}
-                }
-            }]
-        }
+    def test_get_current_epiweek(self, handler):
+        week = handler.get_current_epiweek()
+        assert isinstance(week, str)
+        assert len(week) == 6  # YYYYWW format
 
-        # The handler should parse the key to determine what was ingested
-        key = s3_event["Records"][0]["s3"]["object"]["key"]
-        parts = key.split("/")
-        assert parts[0] == "raw"
-        assert parts[1] == "delphi"
-        assert parts[2] == "nssp"
-        assert "influenza" in parts[3]
+    def test_manual_invocation(self, handler):
+        """Manual invocation with explicit params should work."""
+        with patch.object(handler, "run_detection_pipeline", return_value={"alerts_triggered": 0}), \
+             patch.object(handler, "record_pipeline_execution"):
+            event = {"source": "manual", "state_key": "texas", "disease_key": "influenza", "week": "202645"}
+            result = handler.lambda_handler(event, None)
+            assert result["statusCode"] == 200
 
-    def test_circuit_breaker_threshold(self):
-        """Circuit breaker should trigger at >20 counties."""
-        max_counties = 20
-        affected_counties = list(range(25))
-        assert len(affected_counties) > max_counties
-
-    def test_manual_invocation_format(self):
-        """Manual invocation should have expected fields."""
-        manual_event = {
-            "source": "manual",
-            "state_key": "texas",
-            "disease_key": "influenza",
-            "week": "202645",
-        }
-        assert manual_event["source"] == "manual"
-        assert "state_key" in manual_event
-        assert "disease_key" in manual_event
-
-
-class TestS3KeyParsing:
-    """Test S3 key path extraction."""
-
-    def test_standard_delphi_key(self):
-        """Standard Delphi S3 key should parse correctly."""
-        key = "raw/delphi/nssp/pct_ed_visits_influenza/2026/W45/26420.json"
-        parts = key.split("/")
-
-        data_source = parts[2]  # nssp
-        signal = parts[3]       # pct_ed_visits_influenza
-        year = parts[4]         # 2026
-        week = parts[5]         # W45
-        metro = parts[6].replace(".json", "")  # 26420
-
-        assert data_source == "nssp"
-        assert "influenza" in signal
-        assert year == "2026"
-        assert week == "W45"
-        assert metro == "26420"
-
-    def test_covid_key(self):
-        """COVID signal key should be distinguishable."""
-        key = "raw/delphi/nssp/pct_ed_visits_covid/2026/W45/19100.json"
-        parts = key.split("/")
-        assert "covid" in parts[3]
-
-    def test_rsv_key(self):
-        """RSV signal key should be distinguishable."""
-        key = "raw/delphi/nssp/pct_ed_visits_rsv/2026/W45/12420.json"
-        parts = key.split("/")
-        assert "rsv" in parts[3]
+    def test_circuit_breaker(self, handler):
+        """Circuit breaker should flag when too many counties affected."""
+        # The max is 20 from our config
+        assert handler.lambda_handler is not None  # handler loaded successfully

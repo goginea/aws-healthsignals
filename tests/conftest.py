@@ -15,14 +15,14 @@ LAMBDAS = os.path.join(ROOT, "lambdas")
 SHARED = os.path.join(LAMBDAS, "shared")
 
 
-# ── shared path always available ────────────────────────────────────────────
+# ── shared path always available ────────────────────────────────────────
 if SHARED not in sys.path:
     sys.path.insert(0, SHARED)
 if LAMBDAS not in sys.path:
     sys.path.insert(0, LAMBDAS)
 
 
-# ── AWS env vars so boto3 never tries real credentials ───────────────────────
+# ── AWS env vars so boto3 never tries real credentials ───────────────────
 os.environ.setdefault("AWS_ACCESS_KEY_ID", "testing")
 os.environ.setdefault("AWS_SECRET_ACCESS_KEY", "testing")
 os.environ.setdefault("AWS_SECURITY_TOKEN", "testing")
@@ -30,6 +30,7 @@ os.environ.setdefault("AWS_SESSION_TOKEN", "testing")
 os.environ.setdefault("AWS_DEFAULT_REGION", "us-east-1")
 os.environ.setdefault("ENVIRONMENT", "test")
 os.environ.setdefault("TOKEN_SECRET", "healthsignals-unit-test-secret-key-32ch")
+os.environ.setdefault("TOKEN_SECRET_ARN", "arn:aws:secretsmanager:us-east-1:123456789012:secret:test")
 
 
 def load_handler(handler_dir: str, extra_patches: dict = None):
@@ -43,6 +44,9 @@ def load_handler(handler_dir: str, extra_patches: dict = None):
     extra_patches : dict
         Additional {dotted_name: mock_value} to patch *before* the module
         is imported (for module-level side-effects like boto3.resource calls).
+
+        If a value is a dict or list, it's auto-wrapped in
+        MagicMock(return_value=value) so the handler can call it as a function.
 
     Returns
     -------
@@ -72,6 +76,10 @@ def load_handler(handler_dir: str, extra_patches: dict = None):
     active = []
     try:
         for target, value in patches.items():
+            # Auto-wrap plain dicts/lists as MagicMock(return_value=...)
+            # so handler code can call them as functions
+            if isinstance(value, (dict, list, tuple, str, int, float, bool)):
+                value = MagicMock(return_value=value)
             p = patch(target, value)
             p.start()
             active.append(p)
@@ -90,7 +98,7 @@ def load_handler(handler_dir: str, extra_patches: dict = None):
     return module
 
 
-# ── Shared fixtures ──────────────────────────────────────────────────────────
+# ── Shared fixtures ──────────────────────────────────────────────────────
 
 @pytest.fixture(scope="session")
 def sample_delphi_response():

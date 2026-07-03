@@ -1,91 +1,83 @@
-"""Unit tests for subscription subscribe handler."""
+"""Unit tests for Subscription subscribe Lambda."""
 import json
 import pytest
 from unittest.mock import patch, MagicMock
 
-import sys
-import os
-
-ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-sys.path.insert(0, os.path.join(ROOT, "lambdas/subscription/subscribe"))
-sys.path.insert(0, os.path.join(ROOT, "lambdas/shared"))
-sys.path.insert(0, "lambdas")
+from tests.conftest import load_handler
 
 
-class TestInputValidation:
-    """Test subscription input validation."""
+MOCK_SYSTEM = {
+    "dynamodb_tables": {"subscriptions": "healthsignals-subscriptions-test"},
+    "subscription": {"max_per_county": 10, "verification_token_expiry_hours": 72},
+    "delivery": {"ses_sender_email": "alerts@healthsignals.example.com"},
+}
 
-    def test_valid_fips_format(self):
-        """5-digit FIPS code should be accepted."""
-        import re
-        fips_pattern = r"^\d{5}$"
-        assert re.match(fips_pattern, "48143")
-        assert re.match(fips_pattern, "12086")
-        assert not re.match(fips_pattern, "4814")  # Too short
-        assert not re.match(fips_pattern, "481430")  # Too long
-        assert not re.match(fips_pattern, "ABCDE")  # Non-numeric
 
-    def test_valid_email_format(self):
-        """Email validation should accept common formats."""
-        import re
-        email_pattern = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
-        assert re.match(email_pattern, "health@county.gov")
-        assert re.match(email_pattern, "john.doe@health.texas.gov")
-        assert not re.match(email_pattern, "no-at-sign")
-        assert not re.match(email_pattern, "@missing-local.com")
+@pytest.fixture(scope="module")
+def handler():
+    return load_handler(
+        "subscription/subscribe",
+        extra_patches={
+            "shared.config_loader.get_system_config": MOCK_SYSTEM,
+            "shared.config_loader.list_active_states": [{"state_key": "texas"}],
+            "shared.config_loader.list_active_diseases": [{"disease_key": "influenza"}, {"disease_key": "rsv"}],
+            "boto3.resource": MagicMock(),
+            "boto3.client": MagicMock(),
+        },
+    )
 
-    def test_required_fields_present(self):
-        """Required fields must all be present."""
-        required = ["county_fips", "county_name", "state", "contact_name", "contact_email"]
-        valid_body = {
+
+class TestSubscribe:
+    def test_handler_exists(self, handler):
+        assert hasattr(handler, "lambda_handler")
+
+    def test_missing_required_fields(self, handler):
+        """Missing county_fips should return 400."""
+        event = {"body": json.dumps({"contact_email": "test@test.com"})}
+        result = handler.lambda_handler(event, None)
+        assert result["statusCode"] == 400
+
+    def test_invalid_email(self, handler):
+        """Invalid email format should return 400."""
+        event = {"body": json.dumps({
             "county_fips": "48143",
             "county_name": "Erath County",
             "state": "texas",
-            "contact_name": "Dr. Smith",
-            "contact_email": "smith@county.gov",
-        }
-        for field in required:
-            assert field in valid_body
+            "contact_name": "Dr. Test",
+            "contact_email": "not-an-email",
+        })}
+        result = handler.lambda_handler(event, None)
+        assert result["statusCode"] == 400
 
-    def test_missing_field_rejected(self):
-        """Missing required field should be caught."""
-        required = ["county_fips", "county_name", "state", "contact_name", "contact_email"]
-        incomplete = {"county_fips": "48143", "county_name": "Erath"}
-        missing = [f for f in required if f not in incomplete]
-        assert len(missing) > 0
+    def test_invalid_fips(self, handler):
+        """Invalid FIPS format should return 400."""
+        event = {"body": json.dumps({
+            "county_fips": "ABC",
+            "county_name": "Test",
+            "state": "texas",
+            "contact_name": "Dr. Test",
+            "contact_email": "test@test.com",
+        })}
+        result = handler.lambda_handler(event, None)
+        assert result["statusCode"] == 400
 
-    def test_default_diseases_all_active(self):
-        """If diseases not specified, should default to all active."""
-        body = {"county_fips": "48143", "county_name": "Erath County"}
-        diseases = body.get("diseases", ["influenza", "rsv", "covid"])
-        assert len(diseases) == 3
+    def test_valid_subscription(self, handler):
+        """Valid input should create subscription."""
+        with patch.object(handler, "_count_active_subscriptions", return_value=0), \
+             patch.object(handler, "_send_verification_email"):
+            event = {"body": json.dumps({
+                "county_fips": "48143",
+                "county_name": "Erath County",
+                "state": "texas",
+                "contact_name": "Dr. Jane Smith",
+                "contact_email": "jane@erathcounty.gov",
+                "diseases": ["influenza"],
+            })}
+            result = handler.lambda_handler(event, None)
+            assert result["statusCode"] == 201 or result["statusCode"] == 200
 
-    def test_delivery_preferences_options(self):
-        """Delivery preferences should be email, sms, or both."""
-        valid_options = ["email", "sms", "both"]
-        for opt in valid_options:
-            assert opt in valid_options
-        assert "carrier_pigeon" not in valid_options
-
-
-class TestSubscriptionCreation:
-    """Test subscription record creation logic."""
-
-    def test_subscription_id_is_uuid(self):
-        """subscription_id should be a valid UUID4."""
-        import uuid
-        sub_id = str(uuid.uuid4())
-        # Verify it's a valid UUID
-        parsed = uuid.UUID(sub_id)
-        assert parsed.version == 4
-
-    def test_initial_status_pending(self):
-        """New subscription should start as pending_verification."""
-        initial_status = "pending_verification"
-        assert initial_status == "pending_verification"
-
-    def test_abuse_prevention_limit(self):
-        """Max 10 subscriptions per county to prevent abuse."""
-        max_per_county = 10
-        existing_count = 11
-        assert existing_count > max_per_county
+    def test_json_parse_error(self, handler):
+        """Invalid JSON body should return 400."""
+        event = {"body": "not json"}
+        result = handler.lambda_handler(event, None)
+        assert result["statusCode"] == 400
