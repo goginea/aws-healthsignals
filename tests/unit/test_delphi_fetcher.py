@@ -5,8 +5,11 @@ from unittest.mock import patch, MagicMock
 from datetime import datetime
 
 import sys
-sys.path.insert(0, "lambdas/ingestion/delphi_fetcher")
-sys.path.insert(0, "lambdas/shared")
+import os
+
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.join(ROOT, "lambdas/ingestion/delphi_fetcher"))
+sys.path.insert(0, os.path.join(ROOT, "lambdas/shared"))
 sys.path.insert(0, "lambdas")
 
 

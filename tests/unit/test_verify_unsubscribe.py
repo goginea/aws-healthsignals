@@ -5,9 +5,12 @@ from unittest.mock import patch, MagicMock
 from datetime import datetime
 
 import sys
-sys.path.insert(0, "lambdas/subscription/verify")
-sys.path.insert(0, "lambdas/subscription/unsubscribe")
-sys.path.insert(0, "lambdas/shared")
+import os
+
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.join(ROOT, "lambdas/subscription/verify"))
+sys.path.insert(0, os.path.join(ROOT, "lambdas/subscription/unsubscribe"))
+sys.path.insert(0, os.path.join(ROOT, "lambdas/shared"))
 sys.path.insert(0, "lambdas")
 
 mock_system_config = {
@@ -58,7 +61,7 @@ class TestVerifyHandler:
 
     @patch("sys.path", sys.path)
     def test_missing_token_returns_400(self):
-        sys.path.insert(0, "lambdas/subscription/verify")
+        sys.path.insert(0, os.path.join(ROOT, "lambdas/subscription/verify"))
         with patch("config_loader.get_system_config", return_value=mock_system_config), \
              patch("boto3.resource"), \
              patch("boto3.client"):
@@ -72,7 +75,7 @@ class TestVerifyHandler:
 
     @patch("sys.path", sys.path)
     def test_invalid_token_returns_401(self):
-        sys.path.insert(0, "lambdas/subscription/verify")
+        sys.path.insert(0, os.path.join(ROOT, "lambdas/subscription/verify"))
         from token_utils import TokenError
         with patch("config_loader.get_system_config", return_value=mock_system_config), \
              patch("boto3.resource"), \
@@ -87,7 +90,7 @@ class TestVerifyHandler:
 
     @patch("sys.path", sys.path)
     def test_already_active_returns_200(self):
-        sys.path.insert(0, "lambdas/subscription/verify")
+        sys.path.insert(0, os.path.join(ROOT, "lambdas/subscription/verify"))
         active_sub = {**self._active_sub(), "status": "active", "verified_at": "2026-01-01"}
         with patch("config_loader.get_system_config", return_value=mock_system_config), \
              patch("boto3.resource"), \
@@ -105,7 +108,7 @@ class TestVerifyHandler:
 
     @patch("sys.path", sys.path)
     def test_not_found_returns_404(self):
-        sys.path.insert(0, "lambdas/subscription/verify")
+        sys.path.insert(0, os.path.join(ROOT, "lambdas/subscription/verify"))
         with patch("config_loader.get_system_config", return_value=mock_system_config), \
              patch("boto3.resource"), \
              patch("boto3.client"), \
@@ -120,7 +123,7 @@ class TestVerifyHandler:
 
     @patch("sys.path", sys.path)
     def test_successful_verification_activates_subscription(self):
-        sys.path.insert(0, "lambdas/subscription/verify")
+        sys.path.insert(0, os.path.join(ROOT, "lambdas/subscription/verify"))
         sub = self._active_sub()
         with patch("config_loader.get_system_config", return_value=mock_system_config), \
              patch("boto3.resource"), \
@@ -153,7 +156,7 @@ class TestUnsubscribeHandler:
 
     @pytest.fixture(autouse=True)
     def setup(self):
-        sys.path.insert(0, "lambdas/subscription/unsubscribe")
+        sys.path.insert(0, os.path.join(ROOT, "lambdas/subscription/unsubscribe"))
 
     def _get_event(self, token="valid.unsubscribe.token"):
         return {"httpMethod": "GET", "queryStringParameters": {"token": token}}

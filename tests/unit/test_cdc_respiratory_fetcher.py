@@ -5,7 +5,10 @@ from unittest.mock import patch, MagicMock
 from datetime import datetime
 
 import sys
-sys.path.insert(0, "lambdas/ingestion/cdc_respiratory_fetcher")
+import os
+
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.join(ROOT, "lambdas/ingestion/cdc_respiratory_fetcher"))
 
 
 class TestFetchNsspData:

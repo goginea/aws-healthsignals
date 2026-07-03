@@ -5,7 +5,10 @@ from unittest.mock import patch, MagicMock
 from decimal import Decimal
 
 import sys
-sys.path.insert(0, "lambdas/subscription/status")
+import os
+
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.join(ROOT, "lambdas/subscription/status"))
 
 
 MOCK_SUBSCRIPTION = {

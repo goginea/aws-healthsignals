@@ -4,8 +4,11 @@ import pytest
 from unittest.mock import patch, MagicMock
 
 import sys
-sys.path.insert(0, "lambdas/subscription/subscribe")
-sys.path.insert(0, "lambdas/shared")
+import os
+
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.join(ROOT, "lambdas/subscription/subscribe"))
+sys.path.insert(0, os.path.join(ROOT, "lambdas/shared"))
 sys.path.insert(0, "lambdas")
 
 

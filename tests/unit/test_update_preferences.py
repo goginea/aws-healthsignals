@@ -4,7 +4,10 @@ import pytest
 from unittest.mock import patch, MagicMock
 
 import sys
-sys.path.insert(0, "lambdas/subscription/update_preferences")
+import os
+
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.join(ROOT, "lambdas/subscription/update_preferences"))
 
 
 MOCK_ACTIVE_SUBSCRIPTION = {

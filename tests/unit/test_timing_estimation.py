@@ -4,9 +4,12 @@ from unittest.mock import patch, MagicMock
 from decimal import Decimal
 
 import sys
-sys.path.insert(0, "lambdas/prediction/timing_estimation")
-sys.path.insert(0, "lambdas/shared")
-sys.path.insert(0, "lambdas")
+import os
+
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.join(ROOT, "lambdas/prediction/timing_estimation"))
+sys.path.insert(0, os.path.join(ROOT, "lambdas/shared"))
+sys.path.insert(0, os.path.join(ROOT, "lambdas"))
 
 # Mock config before import
 mock_system_config = {

@@ -4,7 +4,10 @@ import pytest
 from unittest.mock import patch, MagicMock
 
 import sys
-sys.path.insert(0, "lambdas/prediction/geographic_affinity")
+import os
+
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.join(ROOT, "lambdas/prediction/geographic_affinity"))
 
 
 # Sample metro and county config data for mocking
