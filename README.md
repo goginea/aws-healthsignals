@@ -154,7 +154,7 @@ curl -X POST https://API_ID.execute-api.us-east-1.amazonaws.com/prod/subscribe \
   -d '{"county_fips":"48143","county_name":"Erath County","state":"texas","contact_name":"Test","contact_email":"you@example.com","diseases":["influenza","rsv","covid"]}'
 ```
 
-> **Note:** Replace `ACCOUNT_ID` with your AWS account ID (e.g., `767900122304`).
+> **Note:** Replace `ACCOUNT_ID` with your AWS account ID (e.g., `123456789012`).
 > The system monitors weekly and alerts only when flu season thresholds are crossed (typically Oct–Feb).
 > See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for the full deployment guide with troubleshooting.
 
