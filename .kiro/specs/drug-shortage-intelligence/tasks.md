@@ -193,7 +193,7 @@ This implementation plan extends Amazon HealthSignals with drug shortage monitor
     - Configure Knowledge Base retrieval for shortage guidance documents with top-3 chunks and high relevance threshold
     - _Requirements: 5.2, 13.6, 13.8_
 
-- [~] 14. Extend CDK Generation Stack with shortage alert support
+- [x] 14. Extend CDK Generation Stack with shortage alert support
   - Modify `cdk/stacks/generation_stack.py` to update Step Functions state machine definition with new conditional branching
   - Grant Step Functions IAM permissions to invoke Bedrock models for shortage prompts
   - Add Bedrock Knowledge Base permissions for retrieving shortage guidance documents
@@ -244,7 +244,7 @@ This implementation plan extends Amazon HealthSignals with drug shortage monitor
     - Verify only subscriptions matching therapeutic_category receive alerts
     - _Requirements: 16.2, 16.4_
 
-- [~] 17. Extend CDK Delivery Stack with shortage alert support
+- [x] 17. Extend CDK Delivery Stack with shortage alert support
   - Modify `cdk/stacks/delivery_stack.py` to grant Alert Dispatcher Lambda query permissions for therapeutic-category-lookup GSI
   - Grant read/write permissions for healthsignals-shortage-alerts table to update delivery status
   - _Requirements: 9.8_
@@ -344,7 +344,7 @@ This implementation plan extends Amazon HealthSignals with drug shortage monitor
   - Verify Bedrock receives both disease_data and shortage_context in combined brief generation
   - _Requirements: 16.2, 16.4_
 
-- [~] 25. Create configuration validation script
+- [x] 25. Create configuration validation script
   - Write `scripts/validate_shortage_config.py` to verify therapeutic_categories.json schema before deployment
   - Check all disease_key values in relevant_diseases exist in `config/diseases/` directory
   - Check all priority_level values are one of HIGH, MEDIUM, or LOW

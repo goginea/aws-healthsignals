@@ -83,6 +83,7 @@ class DeliveryStack(Stack):
                 "SENDER_EMAIL": self.node.try_get_context("alert_sender_email")
                 or "alerts@healthsignals.example.com",
                 "SUBSCRIPTIONS_TABLE": "healthsignals-subscriptions",
+                "SHORTAGE_ALERTS_TABLE": "healthsignals-shortage-alerts",
                 "CONFIG_BUCKET": f"healthsignals-data-{self.account}-{self.region}",
                 "CONFIG_PREFIX": "config/",
             },
@@ -100,6 +101,20 @@ class DeliveryStack(Stack):
                 resources=[
                     f"arn:aws:dynamodb:{self.region}:{self.account}:table/healthsignals-subscriptions",
                     f"arn:aws:dynamodb:{self.region}:{self.account}:table/healthsignals-subscriptions/index/*",
+                ],
+            )
+        )
+        # Shortage alerts table — read/write for delivery status tracking
+        self.alert_dispatcher.add_to_role_policy(
+            iam.PolicyStatement(
+                actions=[
+                    "dynamodb:GetItem",
+                    "dynamodb:PutItem",
+                    "dynamodb:UpdateItem",
+                    "dynamodb:Query",
+                ],
+                resources=[
+                    f"arn:aws:dynamodb:{self.region}:{self.account}:table/healthsignals-shortage-alerts",
                 ],
             )
         )
