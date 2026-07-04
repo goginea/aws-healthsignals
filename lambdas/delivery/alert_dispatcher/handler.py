@@ -6,6 +6,10 @@ Two delivery paths:
 
 Both paths coexist — subscription table takes priority if a matching record exists.
 Every outbound message includes an unsubscribe link.
+
+Shortage alert delivery (added for Drug Shortage Intelligence Module):
+3. Shortage/Combined: Queries subscriptions via therapeutic-category-lookup GSI
+   and dispatches shortage alerts to matching subscribers.
 """
 import json
 import os
@@ -30,16 +34,27 @@ SUBSCRIPTIONS_TABLE = os.environ.get(
     "SUBSCRIPTIONS_TABLE",
     system.get("dynamodb_tables", {}).get("subscriptions", "healthsignals-subscriptions")
 )
+SHORTAGE_ALERTS_TABLE = os.environ.get(
+    "SHORTAGE_ALERTS_TABLE",
+    system.get("dynamodb_tables", {}).get("shortage_alerts", "healthsignals-shortage-alerts")
+)
 API_BASE_URL = os.environ.get("API_BASE_URL", "https://api.healthsignals.example.com/prod")
 
 ses = boto3.client("ses")
 sns = boto3.client("sns")
 dynamodb = boto3.resource("dynamodb")
+dynamodb_client = boto3.client("dynamodb")
 sub_table = dynamodb.Table(SUBSCRIPTIONS_TABLE)
+shortage_alerts_table = dynamodb.Table(SHORTAGE_ALERTS_TABLE)
 
 
 def lambda_handler(event: dict, context: Any) -> dict:
     """Dispatch alerts to health officers via subscriptions + config fallback.
+
+    Routes based on alert_type:
+    - "disease_outbreak" (default): existing county-based subscription delivery
+    - "shortage": therapeutic category-based delivery for drug shortage alerts
+    - "combined": therapeutic category-based delivery for combined disease+shortage alerts
 
     Input event (from Step Functions — after alert generation):
     {
@@ -48,6 +63,8 @@ def lambda_handler(event: dict, context: Any) -> dict:
         "county_fips": "48143",
         "county_name": "Erath County",
         "state": "texas",
+        "alert_type": "disease_outbreak" | "shortage" | "combined",
+        "therapeutic_category": "Antivirals",  // for shortage/combined
         "alert_content": {
             "situation_brief": "...",
             "checklist": "...",
@@ -61,6 +78,18 @@ def lambda_handler(event: dict, context: Any) -> dict:
         }
     }
     """
+    alert_type = event.get("alert_type", "disease_outbreak")
+
+    # Route shortage and combined alerts to the therapeutic category delivery path
+    if alert_type in ("shortage", "combined"):
+        return _dispatch_shortage_alert(event, alert_type)
+
+    # Default: disease_outbreak path (existing logic)
+    return _dispatch_disease_outbreak_alert(event)
+
+
+def _dispatch_disease_outbreak_alert(event: dict) -> dict:
+    """Existing disease outbreak alert delivery logic (unchanged)."""
     disease = event.get("disease")
     severity = event.get("severity", "MODERATE")
     county_fips = event.get("county_fips")
@@ -126,6 +155,203 @@ def lambda_handler(event: dict, context: Any) -> dict:
         "details": results,
         "success": len(results["dispatched"]) > 0,
     }
+
+
+# --- Shortage Alert Delivery ---
+
+
+def _dispatch_shortage_alert(event: dict, alert_type: str) -> dict:
+    """Deliver shortage or combined alerts filtered by therapeutic category subscription.
+
+    Queries the subscriptions table GSI `therapeutic-category-lookup` for subscribers
+    matching the alert's therapeutic_category. Filters for active, verified, non-paused
+    subscriptions. Sends SES email and optionally SNS SMS to each matching subscriber.
+    Updates the shortage-alerts table record to SENT on success.
+    """
+    therapeutic_category = event.get("therapeutic_category")
+    alert_content = event.get("alert_content", {})
+    product_id = event.get("product_id")
+    week_timestamp = event.get("week_timestamp")
+
+    logger.info(json.dumps({
+        "event_type": "shortage_alert_dispatch_start",
+        "alert_type": alert_type,
+        "therapeutic_category": therapeutic_category,
+        "product_id": product_id,
+        "week_timestamp": week_timestamp,
+    }))
+
+    if not therapeutic_category:
+        logger.error("Missing therapeutic_category in shortage alert event")
+        return {"error": "Missing therapeutic_category", "dispatched": False}
+
+    sender_email = system["delivery"]["ses_sender_email"]
+    max_sms = system["delivery"]["max_sms_length"]
+
+    # Query subscriptions via therapeutic-category-lookup GSI
+    subscribers = _get_shortage_subscribers(therapeutic_category)
+
+    results = {"dispatched": [], "skipped": [], "errors": []}
+
+    if not subscribers:
+        logger.info(json.dumps({
+            "event_type": "shortage_alert_no_subscribers",
+            "therapeutic_category": therapeutic_category,
+        }))
+        results["skipped"].append({
+            "therapeutic_category": therapeutic_category,
+            "reason": "No active subscribers for therapeutic category",
+        })
+    else:
+        for sub in subscribers:
+            try:
+                _dispatch_shortage_to_subscriber(
+                    sub, alert_content, therapeutic_category, alert_type, sender_email, max_sms
+                )
+                results["dispatched"].append({
+                    "contact": sub.get("contact_email"),
+                    "county_fips": sub.get("county_fips"),
+                    "channels": sub.get("channels", []),
+                })
+            except Exception as e:
+                logger.error(f"Shortage alert delivery failed for {sub.get('contact_email')}: {e}")
+                results["errors"].append({
+                    "contact": sub.get("contact_email"),
+                    "error": str(e),
+                })
+
+    recipients_count = len(results["dispatched"])
+
+    # Update shortage-alerts table record to SENT
+    if product_id and week_timestamp and recipients_count > 0:
+        _update_shortage_alert_status(product_id, week_timestamp, recipients_count)
+
+    logger.info(json.dumps({
+        "event_type": "shortage_alert_dispatch_complete",
+        "alert_type": alert_type,
+        "therapeutic_category": therapeutic_category,
+        "recipients_count": recipients_count,
+        "errors_count": len(results["errors"]),
+    }))
+
+    return {
+        "alert_type": alert_type,
+        "therapeutic_category": therapeutic_category,
+        "total_dispatched": recipients_count,
+        "total_errors": len(results["errors"]),
+        "details": results,
+        "success": recipients_count > 0,
+    }
+
+
+def _get_shortage_subscribers(therapeutic_category: str) -> list:
+    """Query subscriptions table using GSI therapeutic-category-lookup.
+
+    Filters:
+    - status = "active"
+    - verified (verified_at is not null)
+    - not currently paused (pause_until is null or in the past)
+    """
+    try:
+        response = sub_table.query(
+            IndexName="therapeutic-category-lookup",
+            KeyConditionExpression=Key("therapeutic_category").eq(therapeutic_category),
+        )
+        items = response.get("Items", [])
+    except Exception as e:
+        logger.error(f"Subscription GSI query failed for therapeutic_category={therapeutic_category}: {e}")
+        return []
+
+    now = datetime.utcnow().isoformat()
+    eligible = []
+
+    for item in items:
+        # Must be active
+        if item.get("status") != "active":
+            continue
+
+        # Must be verified
+        if not item.get("verified_at"):
+            continue
+
+        # Check pause
+        pause_until = item.get("pause_until")
+        if pause_until and pause_until > now:
+            continue
+
+        # Extract channels from delivery_preferences or top-level
+        prefs = item.get("delivery_preferences", {})
+        channels = prefs.get("channels", item.get("channels", ["email"]))
+        item["channels"] = channels
+
+        eligible.append(item)
+
+    return eligible
+
+
+def _dispatch_shortage_to_subscriber(
+    subscriber: dict, alert_content: dict, therapeutic_category: str,
+    alert_type: str, sender_email: str, max_sms: int
+) -> None:
+    """Send shortage/combined alert to a single subscriber."""
+    channels = subscriber.get("channels", ["email"])
+    email = subscriber.get("contact_email")
+    phone = subscriber.get("contact_phone") or subscriber.get("phone_number")
+    county_fips = subscriber.get("county_fips", "")
+    subscription_id = subscriber.get("subscription_id", "")
+
+    # Generate unsubscribe URL
+    unsub_url = generate_unsubscribe_url(API_BASE_URL, county_fips, subscription_id)
+
+    if "email" in channels and email:
+        email_body = alert_content.get("email_body", alert_content.get("situation_brief", ""))
+
+        # Add pharmacist disclaimer
+        disclaimer = "\n\nFOR PHARMACIST REVIEW ONLY — No specific drug substitution recommendations provided."
+        email_body += disclaimer
+
+        # Add unsubscribe footer
+        email_body += f"\n\n---\nTo unsubscribe from HealthSignals alerts: {unsub_url}"
+
+        subject = f"[HealthSignals] Drug Shortage Alert: {therapeutic_category}"
+
+        _send_email(
+            sender=sender_email,
+            recipient=email,
+            subject=subject,
+            body=email_body,
+        )
+
+    if "sms" in channels and phone:
+        sms_text = alert_content.get("sms_text", "")
+        if not sms_text:
+            sms_text = f"HealthSignals: Drug shortage alert for {therapeutic_category}. Check email for details."
+        # Truncate to max SMS length (<=160 chars)
+        sms_text = sms_text[:max_sms]
+        _send_sms(phone_number=phone, message=sms_text)
+
+
+def _update_shortage_alert_status(product_id: str, week_timestamp: str, recipients_count: int) -> None:
+    """Update the shortage-alerts table record to status=SENT with delivery details."""
+    try:
+        shortage_alerts_table.update_item(
+            Key={"product_id": product_id, "week_timestamp": week_timestamp},
+            UpdateExpression="SET alert_generated = :status, delivery_timestamp = :ts, recipients_count = :count",
+            ExpressionAttributeValues={
+                ":status": "SENT",
+                ":ts": datetime.utcnow().isoformat(),
+                ":count": recipients_count,
+            },
+        )
+        logger.info(json.dumps({
+            "event_type": "shortage_alert_status_updated",
+            "product_id": product_id,
+            "week_timestamp": week_timestamp,
+            "status": "SENT",
+            "recipients_count": recipients_count,
+        }))
+    except Exception as e:
+        logger.error(f"Failed to update shortage alert status: product_id={product_id}, week={week_timestamp}: {e}")
 
 
 def _get_active_subscribers(county_fips: str, disease: str, severity: str) -> list:

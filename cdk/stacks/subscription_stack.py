@@ -82,6 +82,16 @@ class SubscriptionStack(Stack):
             ),
         )
 
+        self.subscriptions_table.add_global_secondary_index(
+            index_name="therapeutic-category-lookup",
+            partition_key=dynamodb.Attribute(
+                name="therapeutic_category", type=dynamodb.AttributeType.STRING
+            ),
+            sort_key=dynamodb.Attribute(
+                name="county_fips", type=dynamodb.AttributeType.STRING
+            ),
+        )
+
         # --- Shared Lambda Environment ---
         lambda_env = {
             "SUBSCRIPTIONS_TABLE": self.subscriptions_table.table_name,

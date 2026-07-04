@@ -1,0 +1,33 @@
+{
+  "source_name": "openfda_drug_shortages",
+  "display_name": "FDA Drug Shortages Database",
+  "description": "Current and resolved drug shortage data from FDA openFDA API",
+  "enabled": true,
+  "priority": "supplemental",
+
+  "api": {
+    "base_url": "https://api.fda.gov/drug/shortages.json",
+    "auth_type": "none",
+    "rate_limit_per_hour": 240,
+    "timeout_seconds": 30,
+    "retry_max_attempts": 3,
+    "retry_backoff_seconds": 5,
+    "pagination": {
+      "enabled": true,
+      "limit_param": "limit",
+      "default_limit": 1000
+    }
+  },
+
+  "s3_storage": {
+    "prefix_pattern": "raw/openfda-shortages/{year}/W{week}/shortages_{timestamp}.json"
+  },
+
+  "notes": {
+    "sla": "Public API with no SLA — FDA may change schema without notice",
+    "update_frequency": "Weekly (Monday 6 AM UTC via EventBridge)",
+    "coverage": "All FDA-tracked drug shortages (~1,638 active records as of 2024)",
+    "risk": "API schema may change without versioning. Monitor for 404/schema errors.",
+    "validated": "2025-07-01"
+  }
+}

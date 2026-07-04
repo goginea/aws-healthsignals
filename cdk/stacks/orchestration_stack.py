@@ -90,6 +90,8 @@ class OrchestrationStack(Stack):
                 "ALERT_STATE_TABLE": "healthsignals-alert-state",
                 "MAX_COUNTIES_PER_RUN": "20",
                 "LOG_LEVEL": "INFO",
+                "SHORTAGE_CHANGE_DETECTOR_FUNCTION": "healthsignals-shortage-change-detector",
+                "SHORTAGE_STATE_TABLE": "healthsignals-drug-shortage-state",
             },
             description=(
                 "Pipeline coordinator: chains ingestion → prediction → generation. "
@@ -131,6 +133,30 @@ class OrchestrationStack(Stack):
             )
         )
 
+        # --- Permissions: Invoke shortage change detector Lambda ---
+        self.coordinator.add_to_role_policy(
+            iam.PolicyStatement(
+                actions=["lambda:InvokeFunction"],
+                resources=[
+                    f"arn:aws:lambda:{self.region}:{self.account}:function:healthsignals-shortage-change-detector",
+                ],
+            )
+        )
+
+        # --- Permissions: Read shortage state DynamoDB table and GSI ---
+        self.coordinator.add_to_role_policy(
+            iam.PolicyStatement(
+                actions=[
+                    "dynamodb:Query",
+                    "dynamodb:GetItem",
+                ],
+                resources=[
+                    f"arn:aws:dynamodb:{self.region}:{self.account}:table/healthsignals-drug-shortage-state",
+                    f"arn:aws:dynamodb:{self.region}:{self.account}:table/healthsignals-drug-shortage-state/index/*",
+                ],
+            )
+        )
+
         # --- Permissions: Start Step Functions executions ---
         if state_machine_arn:
             self.coordinator.add_to_role_policy(
@@ -154,4 +180,11 @@ class OrchestrationStack(Stack):
             s3.EventType.OBJECT_CREATED,
             s3n.LambdaDestination(self.coordinator),
             s3.NotificationKeyFilter(prefix="raw/delphi/", suffix=".json"),
+        )
+
+        # --- S3 Event Notification: Trigger on new openFDA shortage data ---
+        data_bucket.add_event_notification(
+            s3.EventType.OBJECT_CREATED,
+            s3n.LambdaDestination(self.coordinator),
+            s3.NotificationKeyFilter(prefix="raw/openfda-shortages/", suffix=".json"),
         )

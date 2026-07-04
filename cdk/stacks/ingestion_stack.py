@@ -186,6 +186,45 @@ class IngestionStack(Stack):
             )
         )
 
+        # --- OpenFDA Drug Shortages Queue ---
+        self.openfda_queue = sqs.Queue(
+            self,
+            "OpenFDAShortagesQueue",
+            queue_name="healthsignals-openfda-shortages-queue",
+            visibility_timeout=Duration.minutes(6),  # > Lambda timeout
+            retention_period=Duration.days(4),
+            dead_letter_queue=sqs.DeadLetterQueue(
+                max_receive_count=3,
+                queue=self.ingestion_dlq,
+            ),
+        )
+
+        # --- OpenFDA Drug Shortage Fetcher ---
+        self.openfda_fetcher = _lambda.Function(
+            self,
+            "OpenFDAShortagesFetcher",
+            function_name="healthsignals-openfda-shortage-fetcher",
+            runtime=_lambda.Runtime.PYTHON_3_11,
+            code=_lambda.Code.from_asset("../lambdas/ingestion/openfda_shortage_fetcher"),
+            handler="handler.lambda_handler",
+            timeout=Duration.minutes(5),
+            memory_size=256,
+            layers=[self.shared_layer],
+            environment={
+                "DATA_BUCKET": self.data_bucket.bucket_name,
+                "CONFIG_BUCKET": self.data_bucket.bucket_name,
+                "CONFIG_PREFIX": "config/",
+            },
+        )
+        self.data_bucket.grant_read_write(self.openfda_fetcher)
+        self.openfda_fetcher.add_event_source(
+            lambda_event_sources.SqsEventSource(
+                self.openfda_queue,
+                batch_size=1,
+                max_batching_window=Duration.seconds(0),
+            )
+        )
+
         # --- EventBridge Scheduler: Weekly Monday 6 AM UTC ---
         # EventBridge sends messages to SQS (not directly to Lambda).
         # This decouples scheduling from execution — if a fetcher fails,
@@ -217,6 +256,14 @@ class IngestionStack(Stack):
         weekly_rule.add_target(
             targets.SqsQueue(
                 self.respiratory_queue,
+                message=events.RuleTargetInput.from_object(
+                    {"source": "scheduled", "trigger": "weekly_monday"}
+                ),
+            )
+        )
+        weekly_rule.add_target(
+            targets.SqsQueue(
+                self.openfda_queue,
                 message=events.RuleTargetInput.from_object(
                     {"source": "scheduled", "trigger": "weekly_monday"}
                 ),

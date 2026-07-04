@@ -31,6 +31,7 @@ from datetime import datetime
 from typing import Any, Optional
 
 import boto3
+from boto3.dynamodb.conditions import Key, Attr
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "shared"))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -76,6 +77,12 @@ PIPELINE_RUNS_TABLE = os.environ.get(
 ALERT_STATE_TABLE = os.environ.get(
     "ALERT_STATE_TABLE", system["dynamodb_tables"]["alert_state"]
 )
+SHORTAGE_CHANGE_DETECTOR_FUNCTION = os.environ.get(
+    "SHORTAGE_CHANGE_DETECTOR_FUNCTION", "healthsignals-shortage-change-detector"
+)
+SHORTAGE_STATE_TABLE = os.environ.get(
+    "SHORTAGE_STATE_TABLE", "healthsignals-drug-shortage-state"
+)
 
 # Circuit breaker threshold
 MAX_COUNTIES_PER_RUN = int(os.environ.get("MAX_COUNTIES_PER_RUN", "20"))
@@ -83,6 +90,7 @@ MAX_COUNTIES_PER_RUN = int(os.environ.get("MAX_COUNTIES_PER_RUN", "20"))
 # DynamoDB tables
 pipeline_runs_table = dynamodb.Table(PIPELINE_RUNS_TABLE)
 alert_state_table = dynamodb.Table(ALERT_STATE_TABLE)
+shortage_state_table = dynamodb.Table(SHORTAGE_STATE_TABLE)
 
 
 def lambda_handler(event: dict, context: Any) -> dict:
@@ -105,6 +113,16 @@ def lambda_handler(event: dict, context: Any) -> dict:
     if "Records" in event:
         # S3 event notification
         trigger_info = parse_s3_event(event)
+
+        # Route openFDA shortage data to shortage handler
+        s3_key = trigger_info.get("s3_key", "")
+        if s3_key and "openfda-shortages" in s3_key:
+            logger.info(f"Routing to shortage handler for key: {s3_key}")
+            shortage_result = handle_shortage_data(s3_key)
+            return {
+                "statusCode": 200,
+                "body": json.dumps(shortage_result, default=str),
+            }
     elif event.get("source") == "manual":
         # Manual/test invocation
         trigger_info = {
@@ -377,6 +395,24 @@ def run_detection_pipeline(
         }
         counties_with_timing.append(county_alert)
 
+    # --- Step 5: Check shortage context for relevant medications ---
+    shortage_context = query_shortage_context(disease_key)
+
+    if shortage_context:
+        alert_type = "combined"
+        logger.info(
+            f"Shortage context found for {disease_key}: "
+            f"{len(shortage_context.get('affected_products', []))} affected products"
+        )
+    else:
+        alert_type = "disease_outbreak"
+
+    # Enrich county alerts with shortage context and alert type
+    for county_alert in counties_with_timing:
+        county_alert["alert_type"] = alert_type
+        if shortage_context:
+            county_alert["shortage_context"] = shortage_context
+
     return {
         "state": state_key,
         "disease": disease_key,
@@ -585,8 +621,13 @@ def start_alert_generation(county_alert: dict, execution_id: str) -> dict:
         "warning_window_weeks": county_alert.get("warning_window_weeks", 4),
         "cdc_activity_level": county_alert.get("cdc_activity_level", "unknown"),
         "alert_contacts": county_alert.get("alert_contacts", []),
+        "alert_type": county_alert.get("alert_type", "disease_outbreak"),
         "execution_id": execution_id,
     }
+
+    # Include shortage context if present (for combined alerts)
+    if county_alert.get("shortage_context"):
+        sfn_input["shortage_context"] = county_alert["shortage_context"]
 
     response = sfn_client.start_execution(
         stateMachineArn=STATE_MACHINE_ARN,
@@ -647,3 +688,178 @@ def get_current_epiweek() -> str:
     year = now.strftime("%Y")
     week = now.strftime("%W")
     return f"{year}{week}"
+
+
+# === Drug Shortage Intelligence Functions ===
+
+
+def handle_shortage_data(s3_key: str) -> dict:
+    """Handle openFDA shortage data by invoking the shortage change detector.
+
+    Routes new shortage data files to the shortage change detection Lambda
+    for comparison against historical state and alert generation.
+
+    Args:
+        s3_key: S3 key of the new shortage data file.
+                Expected format: raw/openfda-shortages/{year}/W{week}/shortages_{timestamp}.json
+
+    Returns:
+        dict with change detection results from the shortage change detector Lambda.
+    """
+    logger.info(f"Handling shortage data: {s3_key}")
+
+    # Extract week_timestamp from S3 key path
+    # Pattern: raw/openfda-shortages/{year}/W{week}/shortages_{timestamp}.json
+    week_timestamp = _extract_week_from_shortage_key(s3_key)
+
+    payload = {
+        "s3_key": s3_key,
+        "week_timestamp": week_timestamp,
+    }
+
+    result = invoke_lambda_sync(SHORTAGE_CHANGE_DETECTOR_FUNCTION, payload)
+
+    logger.info(
+        f"Shortage change detection complete: "
+        f"{json.dumps(result.get('changes_detected', {}))}"
+    )
+
+    return result
+
+
+def _extract_week_from_shortage_key(s3_key: str) -> str:
+    """Extract week_timestamp from openFDA shortage S3 key.
+
+    Args:
+        s3_key: e.g., "raw/openfda-shortages/2024/W03/shortages_20240115_060512.json"
+
+    Returns:
+        Week timestamp in ISO format, e.g., "2024-W03"
+    """
+    parts = s3_key.split("/")
+    # Expected: ["raw", "openfda-shortages", "2024", "W03", "shortages_20240115_060512.json"]
+    if len(parts) >= 4:
+        year = parts[2]
+        week_part = parts[3]  # e.g., "W03"
+        week_num = week_part.replace("W", "").zfill(2)
+        return f"{year}-W{week_num}"
+
+    # Fallback to current epiweek if parsing fails
+    logger.warning(f"Could not extract week from S3 key: {s3_key}, using current week")
+    return _get_current_iso_week()
+
+
+def _get_current_iso_week() -> str:
+    """Get current ISO week as YYYY-WNN format."""
+    now = datetime.utcnow()
+    iso_cal = now.isocalendar()
+    return f"{iso_cal[0]}-W{iso_cal[1]:02d}"
+
+
+def query_shortage_context(disease_key: str) -> Optional[dict]:
+    """Query shortage state for medications relevant to a disease outbreak.
+
+    Looks up therapeutic categories associated with the given disease_key,
+    then queries DynamoDB for current week shortage records in those categories
+    with shortage_status NEW or WORSENING.
+
+    Args:
+        disease_key: The disease key from the outbreak detection (e.g., "influenza").
+
+    Returns:
+        None if no relevant shortages found, or a dict containing:
+        {
+            "affected_products": [{"product_name": str, "therapeutic_category": str, ...}],
+            "categories": ["Antivirals", "Antibiotics"],
+            "disease_key": str,
+            "shortage_count": int
+        }
+    """
+    logger.info(f"Querying shortage context for disease: {disease_key}")
+
+    # Load therapeutic category config
+    try:
+        categories_config = _load_therapeutic_categories()
+    except Exception as e:
+        logger.error(f"Failed to load therapeutic categories config: {e}")
+        return None
+
+    # Find categories where disease_key is in relevant_diseases
+    relevant_categories = []
+    for category in categories_config.get("categories", []):
+        if disease_key in category.get("relevant_diseases", []):
+            relevant_categories.append(category)
+
+    if not relevant_categories:
+        logger.info(f"No therapeutic categories map to disease: {disease_key}")
+        return None
+
+    # Query DynamoDB for current week shortage records in relevant categories
+    current_week = _get_current_iso_week()
+    affected_products = []
+    affected_category_names = []
+
+    for category in relevant_categories:
+        category_key = category["category_key"]
+        display_name = category.get("display_name", category_key)
+
+        try:
+            response = shortage_state_table.query(
+                IndexName="therapeutic-category-index",
+                KeyConditionExpression=(
+                    Key("therapeutic_category").eq(category_key)
+                    & Key("week_timestamp").eq(current_week)
+                ),
+                FilterExpression=(
+                    Attr("shortage_status").is_in(["NEW", "WORSENING"])
+                ),
+            )
+
+            items = response.get("Items", [])
+            if items:
+                affected_category_names.append(display_name)
+                for item in items:
+                    affected_products.append({
+                        "product_id": item.get("product_id"),
+                        "product_name": item.get("product_name"),
+                        "therapeutic_category": display_name,
+                        "supply_status": item.get("supply_status"),
+                        "shortage_status": item.get("shortage_status"),
+                        "reason_for_shortage": item.get("reason_for_shortage"),
+                        "estimated_resolution_date": item.get("estimated_resolution_date"),
+                    })
+
+        except Exception as e:
+            logger.error(
+                f"Error querying shortage state for category {category_key}: {e}"
+            )
+            continue
+
+    if not affected_products:
+        logger.info(f"No active shortages found for disease: {disease_key}")
+        return None
+
+    shortage_context = {
+        "affected_products": affected_products,
+        "categories": affected_category_names,
+        "disease_key": disease_key,
+        "shortage_count": len(affected_products),
+    }
+
+    logger.info(
+        f"Found {len(affected_products)} shortage(s) across "
+        f"{len(affected_category_names)} categories for {disease_key}"
+    )
+
+    return shortage_context
+
+
+def _load_therapeutic_categories() -> dict:
+    """Load therapeutic category configuration using config_loader pattern.
+
+    Loads from S3 (in Lambda) or local filesystem (in development).
+    Uses the shared _load_config pattern via config_loader.
+    """
+    from shared.config_loader import _load_config
+
+    return _load_config("shortage_monitoring/therapeutic_categories.json")
