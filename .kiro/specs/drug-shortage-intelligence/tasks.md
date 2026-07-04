@@ -42,7 +42,7 @@ This implementation plan extends Amazon HealthSignals with drug shortage monitor
     - Add current epiweek timestamp to each normalized record
     - _Requirements: 1.5, 4.3, 11.1, 11.2, 11.3, 11.4, 11.5, 11.6, 11.7, 11.8_
 
-  - [ ]\* 2.3 Write unit tests for openFDA parser
+  - [x]\* 2.3 Write unit tests for openFDA parser
     - Test normalization of valid openFDA API responses with all fields present
     - Test fallback from productName to genericName when productName missing
     - Test skipping records with missing product_id
@@ -100,7 +100,7 @@ This implementation plan extends Amazon HealthSignals with drug shortage monitor
     - Return summary with changes_detected counts by shortage_status and alerts_triggered count
     - _Requirements: 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 3.7, 3.8, 12.2, 12.3, 12.5_
 
-  - [ ]\* 6.2 Write unit tests for change classification logic
+  - [x]\* 6.2 Write unit tests for change classification logic
     - Test NEW classification for product_id not in previous DynamoDB records
     - Test WORSENING classification for supply_status change AVAILABLE → DISCONTINUED
     - Test WORSENING classification for reason_for_shortage text change
@@ -110,7 +110,7 @@ This implementation plan extends Amazon HealthSignals with drug shortage monitor
     - Test circuit breaker activation when NEW+WORSENING count exceeds 20
     - _Requirements: 16.1, 16.3_
 
-  - [ ]\* 6.3 Write unit tests for idempotency logic
+  - [x]\* 6.3 Write unit tests for idempotency logic
     - Test alert generation skipped when shortage-alerts record exists with status SENT for same product_id and week_timestamp
     - Test alert generation retried when record exists with status FAILED and retry_count < 3
     - Test alert record created with status PENDING before Step Functions invocation
@@ -139,7 +139,7 @@ This implementation plan extends Amazon HealthSignals with drug shortage monitor
     - If no shortages, set alert_type="disease_outbreak" and continue existing workflow
     - _Requirements: 6.1, 6.2, 6.3, 6.4, 6.5, 6.6, 6.7, 6.8_
 
-  - [ ]\* 8.3 Write unit tests for Pipeline Coordinator extensions
+  - [x]\* 8.3 Write unit tests for Pipeline Coordinator extensions
     - Test routing to shortage handler for S3 keys matching pattern `raw/openfda-shortages/`
     - Test shortage context query returns relevant medications for disease_key
     - Test combined signal payload includes disease_data and shortage_context
@@ -152,7 +152,7 @@ This implementation plan extends Amazon HealthSignals with drug shortage monitor
   - Add environment variable SHORTAGE_CHANGE_DETECTOR_FUNCTION for Lambda ARN
   - _Requirements: 9.7_
 
-- [~] 10. Checkpoint - Verify shortage detection pipeline
+- [x] 10. Checkpoint - Verify shortage detection pipeline
   - Ensure all tests pass, ask the user if questions arise.
 
 - [x] 11. Create Bedrock prompts for shortage alert generation
@@ -218,7 +218,7 @@ This implementation plan extends Amazon HealthSignals with drug shortage monitor
     - Modify `lambdas/subscription/get_status/handler.py` to include `therapeutic_categories` field in response
     - _Requirements: 7.6_
 
-  - [ ]\* 15.4 Write unit tests for subscription API extensions
+  - [x]\* 15.4 Write unit tests for subscription API extensions
     - Test therapeutic_categories field validation against loaded config
     - Test HTTP 400 error returned for invalid category_key
     - Test preference update appends categories and removes duplicates
@@ -237,7 +237,7 @@ This implementation plan extends Amazon HealthSignals with drug shortage monitor
     - Update shortage-alerts table record to status=SENT with delivery_timestamp and recipients_count
     - _Requirements: 5.5, 5.6, 5.7, 7.7, 12.6_
 
-  - [ ]\* 16.2 Write integration tests for subscription filtering
+  - [x]\* 16.2 Write integration tests for subscription filtering
     - Create test subscriptions with different therapeutic_categories values
     - Trigger shortage alert generation for specific category
     - Verify Alert Dispatcher queries GSI correctly with therapeutic_category partition key
@@ -249,7 +249,7 @@ This implementation plan extends Amazon HealthSignals with drug shortage monitor
   - Grant read/write permissions for healthsignals-shortage-alerts table to update delivery status
   - _Requirements: 9.8_
 
-- [ ] 18. Add CloudWatch monitoring and observability
+- [x] 18. Add CloudWatch monitoring and observability
   - [x] 18.1 Implement CloudWatch metrics emission
     - Add metrics to openFDA fetcher Lambda: openfda_api_success_rate, openfda_rate_limit_errors, shortage_records_fetched_count
     - Add metrics to shortage change detector Lambda: shortage_changes_detected_count (with dimensions for shortage_status), shortage_alerts_generated_count, shortage_circuit_breaker_activations, therapeutic_category_distribution
@@ -264,7 +264,7 @@ This implementation plan extends Amazon HealthSignals with drug shortage monitor
     - Log at ERROR level for: openFDA API failures with status codes, DynamoDB throttling errors, Step Functions failures
     - _Requirements: 14.5, 14.6, 14.7, 14.8_
 
-  - [~] 18.3 Create CloudWatch alarms for failure conditions
+  - [x] 18.3 Create CloudWatch alarms for failure conditions
     - Add alarm `OpenFDAFetcherFailureRate` triggering when openfda_api_success_rate < 50% over 2 evaluation periods (10 min)
     - Add alarm `ShortageAlertsDLQ` triggering when shortage_alerts_dlq_message_count > 0
     - Add alarm `CircuitBreakerActivated` triggering when shortage_circuit_breaker_activations > 0
@@ -272,7 +272,7 @@ This implementation plan extends Amazon HealthSignals with drug shortage monitor
     - Configure SNS topic notifications to ops team for all alarms
     - _Requirements: 14.2, 15.3_
 
-  - [~] 18.4 Extend CloudWatch dashboard with Drug Shortage Intelligence section
+  - [x] 18.4 Extend CloudWatch dashboard with Drug Shortage Intelligence section
     - Modify existing `HealthSignals-Overview` dashboard to add new section
     - Add widget for OpenFDA API Health (success rate and rate limit errors)
     - Add widget for Shortage Changes Detected (sum over 1 hour periods)
@@ -280,13 +280,13 @@ This implementation plan extends Amazon HealthSignals with drug shortage monitor
     - Add log insights widget for Recent Shortage Changes (last 20 records with shortage_status NEW or WORSENING)
     - _Requirements: 14.5_
 
-- [~] 19. Extend CDK Monitoring Stack with shortage observability
+- [x] 19. Extend CDK Monitoring Stack with shortage observability
   - Modify `cdk/stacks/monitoring_stack.py` to create CloudWatch alarms for shortage monitoring
   - Extend existing dashboard definition with Drug Shortage Intelligence widgets
   - Configure SNS topic subscriptions for alarm notifications
   - _Requirements: 9.10_
 
-- [~] 20. Checkpoint - Verify end-to-end alert generation
+- [x] 20. Checkpoint - Verify end-to-end alert generation
   - Ensure all tests pass, ask the user if questions arise.
 
 - [x] 21. Implement error handling and resilience patterns
@@ -318,7 +318,7 @@ This implementation plan extends Amazon HealthSignals with drug shortage monitor
     - Set alert generator timeout to 300s
     - _Requirements: 15.8_
 
-- [ ]\* 22. Write integration tests for shortage ingestion flow
+- [x]\* 22. Write integration tests for shortage ingestion flow
   - Mock openFDA API responses using test fixtures from `tests/data/openfda_mock_responses.json`
   - Trigger openFDA fetcher Lambda with test event
   - Verify S3 object written to correct prefix `raw/openfda-shortages/{year}/W{week}/`
@@ -327,7 +327,7 @@ This implementation plan extends Amazon HealthSignals with drug shortage monitor
   - Test DLQ message delivery for failed API calls after 3 retries
   - _Requirements: 16.2, 16.3, 16.4_
 
-- [ ]\* 23. Write integration tests for shortage change detection flow
+- [x]\* 23. Write integration tests for shortage change detection flow
   - Seed DynamoDB shortage-state table with previous week test data
   - Upload test shortage data to S3 with S3 key pattern
   - Trigger shortage change detector Lambda with S3 PutObject event
@@ -336,7 +336,7 @@ This implementation plan extends Amazon HealthSignals with drug shortage monitor
   - Verify Step Functions executions started for NEW and WORSENING shortages
   - _Requirements: 16.2, 16.4_
 
-- [ ]\* 24. Write integration tests for combined signal generation
+- [x]\* 24. Write integration tests for combined signal generation
   - Seed shortage-state table with relevant medication shortages (Antivirals category, status NEW)
   - Trigger disease outbreak detection with test surveillance data
   - Verify Pipeline Coordinator queries shortage context using disease_key
@@ -372,7 +372,7 @@ This implementation plan extends Amazon HealthSignals with drug shortage monitor
     - Write `config/shortage_monitoring/_template_therapeutic_category.json` with empty template structure for copying when adding new categories
     - _Requirements: 17.8_
 
-- [~] 27. Final checkpoint - Complete deployment and verification
+- [x] 27. Final checkpoint - Complete deployment and verification
   - Deploy all CDK stacks to staging environment
   - Run configuration validation script
   - Execute manual test plan scenarios
