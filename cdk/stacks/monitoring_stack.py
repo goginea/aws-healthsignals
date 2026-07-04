@@ -263,3 +263,169 @@ class MonitoringStack(Stack):
             treat_missing_data=cw.TreatMissingData.NOT_BREACHING,
         )
         delivery_error_alarm.add_alarm_action(cw_actions.SnsAction(self.ops_topic))
+
+        # --- DRUG SHORTAGE INTELLIGENCE ALARMS ---
+
+        # Alarm 5: openFDA Fetcher API failure rate
+        openfda_failure_alarm = cw.Alarm(
+            self,
+            "OpenFDAFetcherFailureAlarm",
+            metric=cw.Metric(
+                namespace="HealthSignals/DrugShortages",
+                metric_name="api_success_rate",
+                dimensions_map={"FunctionName": "openfda_shortage_fetcher"},
+                statistic="Average",
+                period=Duration.minutes(5),
+            ),
+            threshold=0.5,
+            evaluation_periods=2,
+            alarm_description=(
+                "openFDA API success rate below 50% over 2 periods. "
+                "Check FDA API status and network connectivity."
+            ),
+            comparison_operator=cw.ComparisonOperator.LESS_THAN_THRESHOLD,
+            treat_missing_data=cw.TreatMissingData.NOT_BREACHING,
+        )
+        openfda_failure_alarm.add_alarm_action(cw_actions.SnsAction(self.ops_topic))
+
+        # Alarm 6: Circuit breaker activated
+        circuit_breaker_alarm = cw.Alarm(
+            self,
+            "ShortageCircuitBreakerAlarm",
+            metric=cw.Metric(
+                namespace="HealthSignals/DrugShortages",
+                metric_name="shortage_circuit_breaker_activations",
+                dimensions_map={"FunctionName": "shortage_change_detector"},
+                statistic="Sum",
+                period=Duration.minutes(5),
+            ),
+            threshold=1,
+            evaluation_periods=1,
+            alarm_description=(
+                "Drug shortage circuit breaker activated — >20 NEW/WORSENING shortages detected. "
+                "Manual review required before alerts are generated."
+            ),
+            comparison_operator=cw.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+            treat_missing_data=cw.TreatMissingData.NOT_BREACHING,
+        )
+        circuit_breaker_alarm.add_alarm_action(cw_actions.SnsAction(self.ops_topic))
+
+        # Alarm 7: Shortage alerts DLQ depth (openFDA queue failures)
+        shortage_dlq_alarm = cw.Alarm(
+            self,
+            "ShortageDLQAlarm",
+            metric=cw.Metric(
+                namespace="AWS/SQS",
+                metric_name="ApproximateNumberOfMessagesVisible",
+                dimensions_map={"QueueName": "healthsignals-ingestion-dlq"},
+                statistic="Maximum",
+                period=Duration.minutes(5),
+            ),
+            threshold=1,
+            evaluation_periods=1,
+            alarm_description=(
+                "Shortage ingestion messages in DLQ — openFDA fetch failed after 3 retries."
+            ),
+            comparison_operator=cw.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+            treat_missing_data=cw.TreatMissingData.NOT_BREACHING,
+        )
+        shortage_dlq_alarm.add_alarm_action(cw_actions.SnsAction(self.ops_topic))
+
+        # --- Drug Shortage Intelligence Section ---
+        self.dashboard.add_widgets(
+            cw.TextWidget(
+                markdown="## Drug Shortage Intelligence",
+                width=24,
+                height=1,
+            ),
+        )
+
+        self.dashboard.add_widgets(
+            cw.GraphWidget(
+                title="OpenFDA API Health",
+                width=12,
+                height=6,
+                left=[
+                    cw.Metric(
+                        namespace="HealthSignals/DrugShortages",
+                        metric_name="api_success_rate",
+                        dimensions_map={"FunctionName": "openfda_shortage_fetcher"},
+                        statistic="Average",
+                        period=Duration.hours(1),
+                    ),
+                    cw.Metric(
+                        namespace="HealthSignals/DrugShortages",
+                        metric_name="records_fetched_count",
+                        dimensions_map={"FunctionName": "openfda_shortage_fetcher"},
+                        statistic="Sum",
+                        period=Duration.hours(1),
+                    ),
+                ],
+            ),
+            cw.GraphWidget(
+                title="Shortage Changes Detected",
+                width=12,
+                height=6,
+                left=[
+                    cw.Metric(
+                        namespace="HealthSignals/DrugShortages",
+                        metric_name="shortage_changes_detected_count",
+                        dimensions_map={"FunctionName": "shortage_change_detector"},
+                        statistic="Sum",
+                        period=Duration.hours(1),
+                    ),
+                    cw.Metric(
+                        namespace="HealthSignals/DrugShortages",
+                        metric_name="shortage_alerts_generated_count",
+                        dimensions_map={"FunctionName": "shortage_change_detector"},
+                        statistic="Sum",
+                        period=Duration.hours(1),
+                    ),
+                ],
+            ),
+        )
+
+        self.dashboard.add_widgets(
+            cw.SingleValueWidget(
+                title="Circuit Breaker Activations (7d)",
+                width=8,
+                height=4,
+                metrics=[
+                    cw.Metric(
+                        namespace="HealthSignals/DrugShortages",
+                        metric_name="shortage_circuit_breaker_activations",
+                        dimensions_map={"FunctionName": "shortage_change_detector"},
+                        statistic="Sum",
+                        period=Duration.days(7),
+                    ),
+                ],
+            ),
+            cw.SingleValueWidget(
+                title="Shortage Alerts Delivered (7d)",
+                width=8,
+                height=4,
+                metrics=[
+                    cw.Metric(
+                        namespace="HealthSignals/DrugShortages",
+                        metric_name="shortage_alerts_generated_count",
+                        dimensions_map={"FunctionName": "shortage_change_detector"},
+                        statistic="Sum",
+                        period=Duration.days(7),
+                    ),
+                ],
+            ),
+            cw.SingleValueWidget(
+                title="Records Fetched (last run)",
+                width=8,
+                height=4,
+                metrics=[
+                    cw.Metric(
+                        namespace="HealthSignals/DrugShortages",
+                        metric_name="records_fetched_count",
+                        dimensions_map={"FunctionName": "openfda_shortage_fetcher"},
+                        statistic="Maximum",
+                        period=Duration.days(7),
+                    ),
+                ],
+            ),
+        )

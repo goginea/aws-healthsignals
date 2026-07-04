@@ -1,0 +1,109 @@
+{
+  "scenario_new_shortages": {
+    "meta": {
+      "results": {
+        "skip": 0,
+        "limit": 1000,
+        "total": 3
+      }
+    },
+    "results": [
+      {
+        "product_id": "PROD-001",
+        "productName": "Oseltamivir Phosphate Capsules, USP 75mg",
+        "genericName": "Oseltamivir",
+        "currentSupplyStatus": "Discontinued",
+        "reason": "Demand increase due to flu season",
+        "estimatedResolutionDate": "2024-03-15"
+      },
+      {
+        "product_id": "PROD-002",
+        "productName": "Amoxicillin Capsules, USP 500mg",
+        "genericName": "Amoxicillin",
+        "currentSupplyStatus": "Available",
+        "reason": "Manufacturing delay",
+        "estimatedResolutionDate": "2024-02-28"
+      },
+      {
+        "product_id": "PROD-003",
+        "productName": "Metformin Hydrochloride Tablets",
+        "genericName": "Metformin",
+        "currentSupplyStatus": "Discontinued",
+        "reason": "Raw material shortage",
+        "estimatedResolutionDate": null
+      }
+    ]
+  },
+
+  "scenario_resolved_shortages": {
+    "description": "Previous week had PROD-001 and PROD-004. Current week only has PROD-001, so PROD-004 is RESOLVED.",
+    "previous_week_state": [
+      {
+        "product_id": "PROD-001",
+        "product_name": "Oseltamivir Phosphate Capsules, USP 75mg",
+        "therapeutic_category": "antivirals",
+        "supply_status": "DISCONTINUED",
+        "reason_for_shortage": "Demand increase due to flu season",
+        "estimated_resolution_date": "2024-03-15",
+        "week_timestamp": "2024-W02",
+        "shortage_status": "NEW",
+        "previous_supply_status": null
+      },
+      {
+        "product_id": "PROD-004",
+        "product_name": "Azithromycin Tablets, USP 250mg",
+        "therapeutic_category": "antibiotics",
+        "supply_status": "DISCONTINUED",
+        "reason_for_shortage": "Supplier closure",
+        "estimated_resolution_date": "2024-04-01",
+        "week_timestamp": "2024-W02",
+        "shortage_status": "NEW",
+        "previous_supply_status": null
+      }
+    ],
+    "current_week_data": [
+      {
+        "product_id": "PROD-001",
+        "product_name": "Oseltamivir Phosphate Capsules, USP 75mg",
+        "therapeutic_category": "antivirals",
+        "supply_status": "DISCONTINUED",
+        "reason_for_shortage": "Demand increase due to flu season",
+        "estimated_resolution_date": "2024-03-15",
+        "week_timestamp": "2024-W03"
+      }
+    ]
+  },
+
+  "scenario_malformed_data": {
+    "meta": {
+      "results": {
+        "skip": 0,
+        "limit": 1000,
+        "total": 3
+      }
+    },
+    "results": [
+      {
+        "product_id": null,
+        "productName": "Invalid Product With Null ID",
+        "currentSupplyStatus": "Available",
+        "reason": "Test"
+      },
+      {
+        "product_id": "PROD-NONAME",
+        "productName": null,
+        "genericName": null,
+        "currentSupplyStatus": "Discontinued",
+        "reason": "Missing name fields"
+      },
+      {
+        "product_id": "PROD-BADSTATUS",
+        "productName": "Albuterol Sulfate Inhalation Solution",
+        "genericName": "Albuterol",
+        "currentSupplyStatus": "InvalidStatusValue",
+        "reason": "Some reason",
+        "estimatedResolutionDate": "not-a-date"
+      }
+    ]
+  }
+}

@@ -1,0 +1,98 @@
+{
+  "version": "1.0",
+  "description": "Therapeutic categories monitored for drug shortage alerts. Each category maps FDA product names to internal classifications for alert routing and disease correlation.",
+
+  "categories": [
+    {
+      "category_key": "antivirals",
+      "display_name": "Antivirals",
+      "description": "Antiviral medications used to treat influenza, COVID-19, and other viral infections",
+      "priority_level": "HIGH",
+      "relevant_diseases": ["influenza", "covid"],
+      "fda_classification_mapping": [
+        "*oseltamivir*",
+        "*tamiflu*",
+        "*zanamivir*",
+        "*relenza*",
+        "*baloxavir*",
+        "*xofluza*",
+        "*remdesivir*",
+        "*veklury*",
+        "*paxlovid*",
+        "*nirmatrelvir*",
+        "*ritonavir*",
+        "*molnupiravir*",
+        "*lagevrio*",
+        "*peramivir*",
+        "*rapivab*",
+        "*antiviral*"
+      ]
+    },
+    {
+      "category_key": "antibiotics",
+      "display_name": "Antibiotics",
+      "description": "Antibiotic medications used to treat secondary bacterial infections during respiratory disease outbreaks",
+      "priority_level": "HIGH",
+      "relevant_diseases": ["influenza", "covid", "rsv"],
+      "fda_classification_mapping": [
+        "*amoxicillin*",
+        "*augmentin*",
+        "*azithromycin*",
+        "*zithromax*",
+        "*doxycycline*",
+        "*levofloxacin*",
+        "*ceftriaxone*",
+        "*cephalexin*",
+        "*ciprofloxacin*",
+        "*metronidazole*",
+        "*clindamycin*",
+        "*trimethoprim*",
+        "*sulfamethoxazole*",
+        "*penicillin*",
+        "*vancomycin*",
+        "*meropenem*",
+        "*piperacillin*",
+        "*tazobactam*",
+        "*antibiotic*"
+      ]
+    },
+    {
+      "category_key": "respiratory",
+      "display_name": "Respiratory Medications",
+      "description": "Bronchodilators, corticosteroids, and other respiratory medications critical during respiratory disease surges",
+      "priority_level": "MEDIUM",
+      "relevant_diseases": ["rsv", "influenza", "covid"],
+      "fda_classification_mapping": [
+        "*albuterol*",
+        "*ventolin*",
+        "*proair*",
+        "*budesonide*",
+        "*pulmicort*",
+        "*fluticasone*",
+        "*flovent*",
+        "*montelukast*",
+        "*singulair*",
+        "*ipratropium*",
+        "*atrovent*",
+        "*tiotropium*",
+        "*prednisone*",
+        "*prednisolone*",
+        "*dexamethasone*",
+        "*methylprednisolone*",
+        "*salmeterol*",
+        "*formoterol*",
+        "*levalbuterol*",
+        "*xopenex*",
+        "*bronchodilator*",
+        "*inhaler*",
+        "*nebulizer*"
+      ]
+    }
+  ],
+
+  "schema": {
+    "required_fields": ["category_key", "display_name", "description", "priority_level", "relevant_diseases", "fda_classification_mapping"],
+    "valid_priority_levels": ["HIGH", "MEDIUM", "LOW"],
+    "category_key_pattern": "^[a-z][a-z0-9_]*$"
+  }
+}
