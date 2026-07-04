@@ -1,0 +1,13 @@
+{
+  "_comment": "TEMPLATE: Copy this file and fill in the fields to add a new therapeutic category.",
+
+  "category_key": "your_category_key",
+  "display_name": "Your Category Display Name",
+  "description": "Brief description of what this category covers and why it is monitored",
+  "priority_level": "MEDIUM",
+  "relevant_diseases": [],
+  "fda_classification_mapping": [
+    "*pattern1*",
+    "*pattern2*"
+  ]
+}

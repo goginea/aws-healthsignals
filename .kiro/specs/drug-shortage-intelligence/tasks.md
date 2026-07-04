@@ -250,14 +250,14 @@ This implementation plan extends Amazon HealthSignals with drug shortage monitor
   - _Requirements: 9.8_
 
 - [ ] 18. Add CloudWatch monitoring and observability
-  - [~] 18.1 Implement CloudWatch metrics emission
+  - [x] 18.1 Implement CloudWatch metrics emission
     - Add metrics to openFDA fetcher Lambda: openfda_api_success_rate, openfda_rate_limit_errors, shortage_records_fetched_count
     - Add metrics to shortage change detector Lambda: shortage_changes_detected_count (with dimensions for shortage_status), shortage_alerts_generated_count, shortage_circuit_breaker_activations, therapeutic_category_distribution
     - Add metrics to Alert Dispatcher Lambda: shortage_alerts_delivered_count (with dimensions for alert_type)
     - Use namespace "HealthSignals/DrugShortages"
     - _Requirements: 14.1, 14.4_
 
-  - [~] 18.2 Implement structured logging with JSON format
+  - [x] 18.2 Implement structured logging with JSON format
     - Configure all Lambda functions to emit JSON structured logs with fields: timestamp, level, function_name, trace_id, event_type, metadata
     - Add event types: openfda_api_request, openfda_api_response, shortage_change_detected, circuit_breaker_evaluated, alert_generated, subscription_matched, alert_delivered
     - Log at INFO level for: detected changes count by shortage_status, therapeutic categories affected, circuit breaker evaluations, Step Functions invocations, alert delivery success
@@ -289,30 +289,30 @@ This implementation plan extends Amazon HealthSignals with drug shortage monitor
 - [~] 20. Checkpoint - Verify end-to-end alert generation
   - Ensure all tests pass, ask the user if questions arise.
 
-- [ ] 21. Implement error handling and resilience patterns
-  - [~] 21.1 Add retry logic for openFDA API failures
+- [x] 21. Implement error handling and resilience patterns
+  - [x] 21.1 Add retry logic for openFDA API failures
     - Implement exponential backoff retry in openFDA fetcher: 5s, 10s, 20s for HTTP 500/503 errors
     - Skip retry for HTTP 404 errors (log and exit since endpoint may have changed)
     - Send failed messages to DLQ after 3 retry attempts exhausted
     - Emit CloudWatch alarm when DLQ receives messages
     - _Requirements: 15.1, 15.2, 15.3_
 
-  - [~] 21.2 Add DynamoDB throttling error handling
+  - [x] 21.2 Add DynamoDB throttling error handling
     - Implement exponential backoff with jitter for DynamoDB throttling errors (ProvisionedThroughputExceededException)
     - Retry up to 5 times with increasing delays
     - _Requirements: 15.4_
 
-  - [~] 21.3 Add Bedrock throttling error handling
+  - [x] 21.3 Add Bedrock throttling error handling
     - Implement SQS queue for delayed retry when Bedrock throttling errors occur in Step Functions
     - Set retry delay to 60s
     - _Requirements: 15.5_
 
-  - [~] 21.4 Implement graceful degradation
+  - [x] 21.4 Implement graceful degradation
     - If shortage change detection fails, ensure raw API data still stored to S3 for manual review
     - If therapeutic category config file missing or invalid, use default config monitoring only "Antivirals" and "Antibiotics" categories and log warning
     - _Requirements: 15.6, 15.7_
 
-  - [~] 21.5 Configure Lambda timeout values
+  - [x] 21.5 Configure Lambda timeout values
     - Set openFDA fetcher timeout to 120s
     - Set shortage change detector timeout to 180s
     - Set alert generator timeout to 300s
@@ -352,7 +352,7 @@ This implementation plan extends Amazon HealthSignals with drug shortage monitor
   - Run as pre-deployment validation step
   - _Requirements: 17.5_
 
-- [ ] 26. Create comprehensive documentation
+- [x] 26. Create comprehensive documentation
   - [x] 26.1 Create configuration documentation
     - Write `docs/DRUG_SHORTAGE_CONFIGURATION.md` with JSON schema definitions for therapeutic_categories.json and openfda_shortages.json
     - Provide example configurations for adding new therapeutic category, mapping FDA classifications, configuring shortage-to-disease relationships
@@ -361,14 +361,14 @@ This implementation plan extends Amazon HealthSignals with drug shortage monitor
     - Include troubleshooting section with common configuration errors and resolutions
     - _Requirements: 17.1, 17.2, 17.3, 17.4, 17.6, 17.7_
 
-  - [~] 26.2 Create manual testing documentation
+  - [x] 26.2 Create manual testing documentation
     - Write `docs/DRUG_SHORTAGE_TESTING.md` with procedures for manually triggering shortage alerts
     - Include curl commands for subscribing to therapeutic categories via Subscription API
     - Document validation of subscription filtering by therapeutic category
     - Document testing of combined disease and shortage signals
     - _Requirements: 16.6, 16.7_
 
-  - [~] 26.3 Create configuration template file
+  - [x] 26.3 Create configuration template file
     - Write `config/shortage_monitoring/_template_therapeutic_category.json` with empty template structure for copying when adding new categories
     - _Requirements: 17.8_
 
