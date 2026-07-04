@@ -8,11 +8,22 @@ from tests.conftest import load_handler
 
 MOCK_SYSTEM = {"infrastructure": {"data_bucket_name_pattern": "healthsignals-data-test"}}
 MOCK_WW_CONFIG = {
-    "socrata_base_url": "https://data.cdc.gov/resource",
-    "app_token_env_var": "CDC_SOCRATA_APP_TOKEN",
-    "rate_limit_per_hour_unauthenticated": 1000,
+    "api": {
+        "base_url": "https://data.cdc.gov/resource",
+        "app_token_env_var": "CDC_SOCRATA_APP_TOKEN",
+        "timeout_seconds": 30,
+        "pagination_limit": 10000,
+        "max_records": 100000,
+    },
+    "query_defaults": {
+        "lookback_days": 30,
+        "state_field": "wwtp_jurisdiction",
+        "date_field": "date_end",
+        "county_fips_field": "county_fips",
+    },
+    "s3_storage": {"prefix_pattern": "raw/cdc_wastewater/{disease}/{year}/W{week}/data.json"},
 }
-MOCK_STATES = [{"state_key": "texas", "abbreviation": "TX", "sentinel_metros": {"26420": {"county_fips": ["48201"]}}}]
+MOCK_STATES = [{"state_key": "texas", "state_abbreviation": "TX", "sentinel_metros": {"26420": {"county_fips": ["48201"], "short_name": "Houston"}}}]
 MOCK_DISEASES = [{"disease_key": "influenza", "data_sources": {"cdc_wastewater": {"socrata_dataset_id": "ymmh-divb"}}}]
 
 
@@ -53,10 +64,12 @@ class TestWastewaterFetcher:
             {"county_fips": "48201", "value": "3.2"},
             {"county_fips": "99999", "value": "1.0"},
         ]
-        # Filter logic depends on handler implementation
-        filtered = handler.filter_to_metro_counties(records)
+        # Updated signature: filter_to_metro_counties(records, metro_fips, metro_fips_map, fips_field)
+        filtered = handler.filter_to_metro_counties(records, ["48201"], {"48201": "Houston"}, "county_fips")
         # Should return only records matching metro county FIPS
         assert isinstance(filtered, list)
+        assert len(filtered) == 1
+        assert filtered[0]["county_fips"] == "48201"
 
     def test_handler_api_error(self, handler):
         with patch.object(handler, "fetch_wastewater_data", side_effect=RuntimeError("429 rate limit")), \

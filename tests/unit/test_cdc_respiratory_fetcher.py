@@ -8,11 +8,22 @@ from tests.conftest import load_handler
 
 MOCK_SYSTEM = {"infrastructure": {"data_bucket_name_pattern": "healthsignals-data-test"}}
 MOCK_NSSP_CONFIG = {
-    "socrata_base_url": "https://data.cdc.gov/resource",
-    "dataset_id": "rdmq-nq56",
+    "api": {
+        "base_url": "https://data.cdc.gov/resource",
+        "dataset_id": "rdmq-nq56",
+        "app_token_env_var": "CDC_SOCRATA_APP_TOKEN",
+        "timeout_seconds": 30,
+        "max_records_per_query": 1000,
+    },
+    "query_defaults": {
+        "lookback_days": 60,
+        "visit_type_filter": "ed",
+        "always_include_geographies": ["National"],
+    },
+    "s3_storage": {"prefix_pattern": "raw/cdc_nssp/{year}/W{week}/respiratory_activity.json"},
 }
-MOCK_STATES = [{"state_key": "texas", "cdc_state_name": "Texas"}]
-MOCK_DISEASES = [{"disease_key": "influenza", "nssp_pathogen_name": "Influenza"}]
+MOCK_STATES = [{"state_key": "texas", "state_name": "Texas", "cdc_geography_name": "Texas"}]
+MOCK_DISEASES = [{"disease_key": "influenza", "data_sources": {"cdc_nssp": {"pathogen_name": "Influenza"}}}]
 
 
 @pytest.fixture(scope="module")

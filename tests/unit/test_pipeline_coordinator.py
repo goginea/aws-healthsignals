@@ -7,6 +7,7 @@ from tests.conftest import load_handler
 
 
 MOCK_SYSTEM = {
+    "infrastructure": {"data_bucket_name_pattern": "healthsignals-data-test"},
     "dynamodb_tables": {"pipeline_runs": "healthsignals-pipeline-runs-test", "alert_state": "healthsignals-alert-state-test"},
     "lambda_functions": {
         "leader_detection": "healthsignals-leader-detection",
@@ -15,6 +16,7 @@ MOCK_SYSTEM = {
     },
     "step_functions": {"alert_generation_arn": "arn:aws:states:us-east-1:123:stateMachine:test"},
     "orchestration": {"max_counties_per_run": 20, "circuit_breaker_enabled": True},
+    "observability": {"log_level": "INFO"},
 }
 
 
@@ -26,6 +28,9 @@ def handler():
             "shared.config_loader.get_system_config": MOCK_SYSTEM,
             "shared.config_loader.list_active_states": [{"state_key": "texas"}],
             "shared.config_loader.list_active_diseases": [{"disease_key": "influenza"}],
+            "shared.config_loader.get_state_config": {"sentinel_metros": {}},
+            "shared.config_loader.get_all_sentinel_metros": {},
+            "shared.config_loader.get_disease_config": {"data_sources": {"delphi": {"signal": "pct_ed_visits_influenza"}}},
             "boto3.client": MagicMock(),
             "boto3.resource": MagicMock(),
         },

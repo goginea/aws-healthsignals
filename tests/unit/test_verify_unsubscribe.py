@@ -89,8 +89,9 @@ class TestUnsubscribe:
     def test_post_valid_unsubscribe(self, unsubscribe_handler):
         """POST with valid subscription_id should succeed."""
         mock_sub = {"county_fips": "48143", "subscription_id": "abc", "status": "active"}
-        with patch.object(unsubscribe_handler, "_deactivate_subscription", return_value=True), \
-             patch.object(unsubscribe_handler, "_send_unsubscribe_confirmation"):
+        mock_response = {"statusCode": 200, "headers": {"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"}, "body": json.dumps({"message": "Successfully unsubscribed."})}
+        with patch.object(unsubscribe_handler, "_deactivate_subscription", return_value=mock_response), \
+             patch.object(unsubscribe_handler, "_send_unsubscribe_confirmation", return_value=None):
             event = {
                 "httpMethod": "POST",
                 "body": json.dumps({"subscription_id": "abc", "county_fips": "48143"}),

@@ -51,6 +51,9 @@ def lambda_handler(event: dict, context: Any) -> dict:
     """
     try:
         body = _parse_body(event)
+    except json.JSONDecodeError as e:
+        return _response(400, {"error": "invalid_json", "message": f"Invalid JSON in request body: {e}"})
+    try:
 
         county_fips = body.get("county_fips")
         subscription_id = body.get("subscription_id")

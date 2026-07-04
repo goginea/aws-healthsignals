@@ -160,14 +160,16 @@ def _validate_input(body: dict) -> None:
 
     # State must exist in config
     active_states = list_active_states()
-    if body["state"].lower() not in [s.lower() for s in active_states]:
+    state_keys = [s["state_key"] if isinstance(s, dict) else s for s in active_states]
+    if body["state"].lower() not in [sk.lower() for sk in state_keys]:
         raise ValidationError(f"State '{body['state']}' not configured. Active: {active_states}")
 
     # Diseases must be valid if specified
     if body.get("diseases"):
         active_diseases = list_active_diseases()
+        disease_keys = [d["disease_key"] if isinstance(d, dict) else d for d in active_diseases]
         for d in body["diseases"]:
-            if d.lower() not in [ad.lower() for ad in active_diseases]:
+            if d.lower() not in [dk.lower() for dk in disease_keys]:
                 raise ValidationError(f"Disease '{d}' not configured. Active: {active_diseases}")
 
 

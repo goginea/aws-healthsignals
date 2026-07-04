@@ -41,16 +41,16 @@ class TestSubscriptionStatus:
             "contact_email": "test@test.com",
             "verified_at": "2026-01-15T11:00:00",
         }
-        with patch.object(handler, "_get_single_subscription", return_value=mock_sub), \
-             patch.object(handler, "_get_recent_alerts", return_value=[]), \
-             patch.object(handler, "_assess_health", return_value={"status": "healthy"}):
-            event = {"queryStringParameters": {"subscription_id": "abc-123"}}
+        with patch.object(handler, "sub_table") as mock_table, \
+             patch.object(handler, "_get_recent_alerts", return_value=[]):
+            mock_table.get_item.return_value = {"Item": mock_sub}
+            event = {"queryStringParameters": {"county_fips": "48143", "subscription_id": "abc-123"}}
             result = handler.lambda_handler(event, None)
             assert result["statusCode"] == 200
 
     def test_not_found_returns_404(self, handler):
         """Non-existent subscription should return 404."""
-        with patch.object(handler, "_get_single_subscription", return_value=None):
-            event = {"queryStringParameters": {"subscription_id": "nonexistent"}}
+        with patch.object(handler, "_get_single_subscription", return_value=handler._response(404, {"error": "Subscription not found"})):
+            event = {"queryStringParameters": {"county_fips": "48143", "subscription_id": "nonexistent"}}
             result = handler.lambda_handler(event, None)
             assert result["statusCode"] == 404

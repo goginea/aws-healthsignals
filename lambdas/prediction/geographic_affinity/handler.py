@@ -45,7 +45,8 @@ def lambda_handler(event: dict, context: Any) -> dict:
     Returns:
         List of affected counties with their affinity weights.
     """
-    leader_msa = event.get("leader", {}).get("msa_code")
+    leader_data = event.get("leader") or {}
+    leader_msa = leader_data.get("msa_code")
     disease = event.get("disease")
     week = event.get("week")
     season = event.get("season")

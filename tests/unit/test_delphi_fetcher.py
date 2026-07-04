@@ -14,15 +14,15 @@ MOCK_SYSTEM = {
 
 MOCK_DELPHI_CONFIG = {
     "api": {"base_url": "https://api.delphi.cmu.edu/epidata/covidcast/", "timeout_seconds": 30},
-    "query_defaults": {"lookback_weeks": 8, "geo_type": "msa"},
+    "query_defaults": {"lookback_weeks": 8, "geo_type": "county", "time_type": "week"},
     "s3_storage": {"prefix_pattern": "raw/delphi/{data_source}/{signal}/{year}/W{week}/{geo_value}.json"},
 }
 
 MOCK_METROS = {
-    "26420": {"short_name": "Houston", "state_abbreviation": "TX"},
-    "19100": {"short_name": "DFW", "state_abbreviation": "TX"},
-    "12420": {"short_name": "Austin", "state_abbreviation": "TX"},
-    "41700": {"short_name": "San Antonio", "state_abbreviation": "TX"},
+    "26420": {"short_name": "Houston", "state_abbreviation": "TX", "primary_county_fips": "48201"},
+    "19100": {"short_name": "DFW", "state_abbreviation": "TX", "primary_county_fips": "48113"},
+    "12420": {"short_name": "Austin", "state_abbreviation": "TX", "primary_county_fips": "48453"},
+    "41700": {"short_name": "San Antonio", "state_abbreviation": "TX", "primary_county_fips": "48029"},
 }
 
 MOCK_DISEASES = [
@@ -85,7 +85,16 @@ class TestFetchSignal:
             mock_response.data = json.dumps({"epidata": [], "result": 1}).encode()
             mock_http.request.return_value = mock_response
 
-            handler.fetch_signal("nssp", "pct_ed_visits_influenza", "26420", "20260601", "20260703")
+            handler.fetch_signal(
+                api_base="https://api.delphi.cmu.edu/epidata/covidcast/",
+                data_source="nssp",
+                signal_name="pct_ed_visits_influenza",
+                geo_type="county",
+                geo_value="26420",
+                time_type="week",
+                start_week="202623",
+                end_week="202627",
+            )
 
             url = mock_http.request.call_args[0][1]
             assert "api.delphi.cmu.edu/epidata/covidcast" in url
@@ -101,7 +110,16 @@ class TestFetchSignal:
             mock_http.request.return_value = mock_response
 
             with pytest.raises(RuntimeError, match="500"):
-                handler.fetch_signal("nssp", "pct_ed_visits_influenza", "26420", "20260601", "20260703")
+                handler.fetch_signal(
+                    api_base="https://api.delphi.cmu.edu/epidata/covidcast/",
+                    data_source="nssp",
+                    signal_name="pct_ed_visits_influenza",
+                    geo_type="county",
+                    geo_value="26420",
+                    time_type="week",
+                    start_week="202623",
+                    end_week="202627",
+                )
 
 
 class TestFullHandler:
