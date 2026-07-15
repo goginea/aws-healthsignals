@@ -1,6 +1,6 @@
 # Configuration — Amazon HealthSignals
 
-This directory contains **all operational configuration** for HealthSignals. Adding new states, diseases, or data sources requires only editing/adding JSON files here — no code changes needed.
+This directory contains all operational configuration for HealthSignals. Adding new states, diseases, or data sources requires only editing/adding JSON files here — no code changes needed.
 
 ---
 
@@ -8,177 +8,118 @@ This directory contains **all operational configuration** for HealthSignals. Add
 
 ```
 config/
-├── system.json              # Global: S3 buckets, DynamoDB tables, Bedrock models, delivery
+├── system.json                  # Global: S3 buckets, DynamoDB tables, Bedrock models, delivery
+├── alert_categories.json        # Shared: subscriber opt-in categories for plugin modules
+├── disease_thresholds.json      # Detection threshold overrides
+├── metros.json                  # Metro area reference data
+├── subscription_settings.json   # Subscription limits and defaults
+├── counties_sample.json         # Sample county data
+│
 ├── data_sources/
-│   ├── delphi.json          # CMU Delphi Epidata API settings
-│   ├── cdc_wastewater.json  # CDC NWSS Socrata API settings
-│   └── cdc_nssp.json        # CDC NSSP ED Visit Socrata API settings
+│   ├── delphi.json              # CMU Delphi Epidata API settings
+│   ├── cdc_wastewater.json      # CDC NWSS Socrata API settings
+│   ├── cdc_nssp.json            # CDC NSSP ED Visit API settings
+│   └── openfda_shortages.json   # [Plugin] openFDA Drug Shortages API
+│
 ├── states/
-│   ├── texas.json           # Texas: metros, counties, contacts, overrides
-│   ├── _template.json       # ← Copy this to add a new state
-│   └── (your_state.json)
+│   ├── texas.json               # Texas: metros, counties, contacts, overrides
+│   ├── _template.json           # Copy this to add a new state
+│   └── ...
+│
 ├── diseases/
-│   ├── influenza.json       # Flu: thresholds, signals, prompts
-│   ├── rsv.json             # RSV: thresholds, signals, prompts
-│   ├── covid.json           # COVID-19: thresholds, signals, prompts
-│   ├── _template.json       # ← Copy this to add a new disease
-│   └── (your_disease.json)
-└── README.md                # This file
+│   ├── influenza.json           # Flu: thresholds, signals
+│   ├── rsv.json                 # RSV: thresholds, signals
+│   ├── covid.json               # COVID-19: thresholds, signals
+│   ├── _template.json           # Copy this to add a new disease
+│   └── ...
+│
+└── shortage_monitoring/         # [Plugin] Drug Shortage module config
+    ├── therapeutic_categories.json   # Monitored drug categories + disease mappings
+    └── _template_therapeutic_category.json  # Template for new categories
 ```
+
+---
+
+## Core Config Files
+
+### system.json
+
+Global system configuration: DynamoDB table names, S3 bucket patterns, Bedrock model IDs, delivery settings (SES sender, SMS limits). Used by all Lambdas.
+
+### alert_categories.json
+
+Defines categories available for subscriber opt-in. Plugin modules register their categories here. Used by the `update_preferences` Lambda to validate subscriber category selections. When no plugins are enabled, this file can be empty (`{"categories": []}`).
+
+### data_sources/
+
+API endpoint configuration for each data source. The `config_loader` reads these to determine URLs, rate limits, pagination settings, and retry behavior.
+
+### states/
+
+One file per monitored state. Contains sentinel metro definitions, subscribing counties, contacts, and optional disease-specific threshold overrides.
+
+### diseases/
+
+One file per monitored disease. Contains detection thresholds, data source signal mappings, and severity classification rules.
+
+---
+
+## Plugin Config Files
+
+### shortage_monitoring/ (Drug Shortage Module)
+
+Only used when `enable_drug_shortage: true` in `cdk/cdk.json`.
+
+- `therapeutic_categories.json` — Defines which drug categories to monitor, their priority levels, disease relationships, and FDA product name matching patterns
+- `_template_therapeutic_category.json` — Template for adding new categories
 
 ---
 
 ## How to Add a New State
 
-1. **Copy the template:**
-   ```bash
-   cp config/states/_template.json config/states/florida.json
-   ```
+```bash
+cp config/states/_template.json config/states/florida.json
+# Edit with sentinel metros and subscribing counties
+aws s3 cp config/states/florida.json s3://${CONFIG_BUCKET}/config/states/florida.json
+python scripts/seed_calibration_data.py --state florida --seasons 3
+```
 
-2. **Fill in required fields:**
-   - `state_key`: lowercase identifier (e.g., `"florida"`)
-   - `state_name`: full name (e.g., `"Florida"`)
-   - `state_abbreviation`: 2-letter code (e.g., `"FL"`)
-   - `cdc_geography_name`: must match CDC NSSP dataset exactly (e.g., `"Florida"`)
-   - `sentinel_metros`: 2-4 major metros with MSA FIPS codes and county FIPS
-   - `subscribing_counties`: rural counties that will receive alerts
-
-3. **Set `enabled: true`** when ready to activate.
-
-4. **Seed calibration data:**
-   ```bash
-   python scripts/seed_calibration_data.py --state florida
-   ```
-
-5. **Upload to S3** (or redeploy via CDK):
-   ```bash
-   aws s3 cp config/states/florida.json s3://${CONFIG_BUCKET}/config/states/florida.json
-   ```
-
-6. **No code changes needed.** The next Lambda invocation will pick up the new state automatically.
-
-### Finding MSA FIPS Codes
-- Census Bureau: https://www.census.gov/programs-surveys/metro-micro.html
-- Download list: https://www2.census.gov/programs-surveys/metro-micro/geographies/reference-files/
-
-### Finding County FIPS Codes
-- Census ANSI codes: https://www.census.gov/library/reference/code-lists/ansi.html
+No code changes needed.
 
 ---
 
 ## How to Add a New Disease
 
-1. **Copy the template:**
-   ```bash
-   cp config/diseases/_template.json config/diseases/mpox.json
-   ```
+```bash
+cp config/diseases/_template.json config/diseases/mpox.json
+# Edit with thresholds, data source signals, severity rules
+aws s3 cp config/diseases/mpox.json s3://${CONFIG_BUCKET}/config/diseases/mpox.json
+```
 
-2. **Fill in required fields:**
-   - `disease_key`: lowercase identifier
-   - `detection.threshold_pct_ed_visits`: what % of ED visits signals an outbreak
-   - `data_sources.delphi`: Delphi signal name (check their docs for availability)
-   - `data_sources.cdc_wastewater.socrata_dataset_id`: Socrata 4×4 ID from data.cdc.gov
-   - `data_sources.cdc_nssp.pathogen_name`: exact name in NSSP dataset
-   - `severity_classification`: define LOW/MODERATE/HIGH/CRITICAL thresholds
-   - `prompt_hints`: guide the AI on what to recommend/avoid
-
-3. **Set `enabled: true`** when ready.
-
-4. **Seed calibration data** (requires ≥2 seasons of historical data):
-   ```bash
-   python scripts/seed_calibration_data.py --disease mpox
-   ```
-
-5. **Upload and done.** No code changes required.
-
-### Prerequisites for Adding a Disease
-- The disease must follow **geographic propagation** (metro → rural pattern)
-- At least one data source must provide MSA-level or state-level data
-- You need ≥2 historical seasons for calibration (otherwise predictions use defaults)
-- Diseases that DON'T fit this model: foodborne, sexually transmitted, vector-borne
+Prerequisite: the disease must follow geographic propagation (metro-to-rural) and have at least one MSA-level data source.
 
 ---
 
 ## How to Add a New Data Source
 
-This is the **one scenario that requires code**:
-
-1. Create `config/data_sources/your_source.json` with API settings
-2. Write a new Lambda fetcher at `lambdas/ingestion/your_source_fetcher/handler.py`
-3. Add CDK resources in `cdk/stacks/ingestion_stack.py`
-4. Reference the new source in disease configs under `data_sources.your_source`
-
-The existing fetcher pattern is designed to be copied. See `delphi_fetcher/handler.py` as the simplest example.
+This requires code: write a new fetcher Lambda at `lambdas/ingestion/your_source_fetcher/handler.py` and add CDK resources. The config file at `config/data_sources/your_source.json` defines the API connection parameters. See `delphi_fetcher/handler.py` as a reference implementation.
 
 ---
 
-## How Config Loading Works
+## Config Loading
 
-```
-Lambda cold start
-    ↓
-Check CONFIG_BUCKET env var
-    ↓
-┌─── CONFIG_BUCKET set? ───┐
-│ YES                       │ NO
-│ Load from S3              │ Load from local config/ directory
-│ s3://{bucket}/{prefix}/   │ (for pytest and local development)
-└───────────────────────────┘
-    ↓
-Cache in memory (reused across warm invocations)
-    ↓
-Validate required fields
-    ↓
-Return config dict
-```
+Configs are loaded by `lambdas/shared/config_loader.py`:
 
-### Environment Variables
-
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `CONFIG_BUCKET` | No | `""` (use local) | S3 bucket with config files |
-| `CONFIG_PREFIX` | No | `"config/"` | S3 key prefix |
-| `CONFIG_LOCAL_PATH` | No | `../../config` | Local filesystem path (dev/test) |
-
----
-
-## Schema Reference
-
-### State Config (required fields)
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `state_key` | string | Lowercase identifier |
-| `state_name` | string | Full state name |
-| `state_abbreviation` | string | 2-letter code |
-| `cdc_geography_name` | string | Exact match for CDC NSSP dataset |
-| `enabled` | boolean | Whether to monitor this state |
-| `sentinel_metros` | object | MSA FIPS → metro details |
-| `subscribing_counties` | array | Counties receiving alerts |
-
-### Disease Config (required fields)
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `disease_key` | string | Lowercase identifier |
-| `display_name` | string | Human-readable name |
-| `enabled` | boolean | Whether to monitor this disease |
-| `detection.threshold_pct_ed_visits` | float | % ED visits to trigger detection |
-| `detection.require_rising_trend` | boolean | Must trend be rising? |
-| `data_sources` | object | Signal IDs per data source |
-| `severity_classification` | object | LOW/MODERATE/HIGH/CRITICAL definitions |
+- **Production**: reads from S3 using `CONFIG_BUCKET` and `CONFIG_PREFIX` env vars
+- **Development/test**: reads from local `config/` directory when `CONFIG_BUCKET` is empty
+- **Caching**: configs are cached in Lambda memory after first load; force refresh with `{"_refresh_config": true}`
 
 ---
 
 ## Validation
 
-Configs are validated at load time. Missing required fields produce clear error messages:
+Configs are validated at load time. Test locally:
 
-```
-ConfigLoadError: State config 'florida' missing required fields: ['sentinel_metros']
-```
-
-To test config validity locally:
 ```bash
 python -c "
 import sys; sys.path.insert(0, 'lambdas')

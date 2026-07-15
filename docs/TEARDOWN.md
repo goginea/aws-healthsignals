@@ -11,7 +11,11 @@ cd aws-healthsignals/cdk
 npx aws-cdk destroy --all --force
 ```
 
-This removes all 7 CloudFormation stacks and their resources (Lambdas, DynamoDB tables, SQS queues, Step Functions, API Gateway, SNS topics, CloudWatch dashboards, alarms).
+This removes all CloudFormation stacks (7 core + any enabled plugin stacks) and their resources.
+
+If the Drug Shortage module was enabled, this also removes:
+
+- `HealthSignals-DrugShortage` stack (DynamoDB tables, Lambdas, Step Functions, SQS, alarms, dashboard)
 
 ---
 
@@ -59,11 +63,16 @@ aws dynamodb delete-table --table-name healthsignals-county-configs
 aws dynamodb delete-table --table-name healthsignals-feedback
 aws dynamodb delete-table --table-name healthsignals-pipeline-runs
 aws dynamodb delete-table --table-name healthsignals-subscriptions
+
+# Drug Shortage module tables (if enabled)
+aws dynamodb delete-table --table-name healthsignals-drug-shortage-state 2>/dev/null
+aws dynamodb delete-table --table-name healthsignals-shortage-alerts 2>/dev/null
 ```
 
 ### 4. Bedrock Knowledge Bases (if created in console)
 
 If you created Bedrock Knowledge Bases manually:
+
 1. Go to **Amazon Bedrock** → **Knowledge Bases** in the console
 2. Delete each HealthSignals KB (CDC Guidelines, Communication Templates)
 3. Delete the associated S3 data source and IAM role
@@ -83,6 +92,12 @@ aws logs delete-log-group --log-group-name /aws/lambda/healthsignals-pipeline-co
 aws logs delete-log-group --log-group-name /aws/lambda/healthsignals-alert-dispatcher
 aws logs delete-log-group --log-group-name /aws/lambda/healthsignals-feedback-recalibrator
 aws logs delete-log-group --log-group-name /aws/states/healthsignals-alert-generation
+
+# Drug Shortage module (if enabled)
+aws logs delete-log-group --log-group-name /aws/lambda/healthsignals-openfda-shortage-fetcher 2>/dev/null
+aws logs delete-log-group --log-group-name /aws/lambda/healthsignals-shortage-change-detector 2>/dev/null
+aws logs delete-log-group --log-group-name /aws/lambda/healthsignals-shortage-enrichment 2>/dev/null
+aws logs delete-log-group --log-group-name /aws/states/healthsignals-shortage-alert-generation 2>/dev/null
 ```
 
 Or delete all at once:
@@ -156,6 +171,7 @@ All commands should return empty results.
 ## Cost After Teardown
 
 Once all resources are removed:
+
 - **Ongoing cost: $0.00/month**
 - No reserved capacity, no committed spend, no minimum fees
 - CloudWatch log storage for retained logs is negligible (~$0.03/GB/month)
@@ -178,4 +194,4 @@ aws dynamodb scan --table-name healthsignals-pipeline-runs --output json > pipel
 
 ---
 
-*Total teardown time: ~5 minutes (CDK destroy) + ~5 minutes (manual cleanup)*
+_Total teardown time: ~5 minutes (CDK destroy) + ~5 minutes (manual cleanup)_
