@@ -24,7 +24,7 @@ from constructs import Construct
 
 
 class DeliveryStack(Stack):
-    def __init__(self, scope: Construct, construct_id: str, **kwargs) -> None:
+    def __init__(self, scope: Construct, construct_id: str, plugin_table_arns: list[str] = None, plugin_dispatch_modules: str = "", plugin_env_vars: dict[str, str] = None, **kwargs) -> None:
         super().__init__(scope, construct_id, **kwargs)
 
         # --- Shared Lambda Layer ---
@@ -83,8 +83,10 @@ class DeliveryStack(Stack):
                 "SENDER_EMAIL": self.node.try_get_context("alert_sender_email")
                 or "alerts@healthsignals.example.com",
                 "SUBSCRIPTIONS_TABLE": "healthsignals-subscriptions",
+                "DISPATCH_PLUGINS": plugin_dispatch_modules,
                 "CONFIG_BUCKET": f"healthsignals-data-{self.account}-{self.region}",
                 "CONFIG_PREFIX": "config/",
+                **(plugin_env_vars or {}),
             },
         )
         self.alert_dispatcher.add_to_role_policy(
@@ -103,6 +105,20 @@ class DeliveryStack(Stack):
                 ],
             )
         )
+        # Plugin table permissions — dynamic IAM for plugin modules
+        _plugin_arns = plugin_table_arns or []
+        if _plugin_arns:
+            self.alert_dispatcher.add_to_role_policy(
+                iam.PolicyStatement(
+                    actions=[
+                        "dynamodb:GetItem",
+                        "dynamodb:PutItem",
+                        "dynamodb:UpdateItem",
+                        "dynamodb:Query",
+                    ],
+                    resources=_plugin_arns,
+                )
+            )
         self.alert_dispatcher.add_to_role_policy(
             iam.PolicyStatement(
                 actions=["s3:GetObject"],

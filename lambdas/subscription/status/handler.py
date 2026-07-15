@@ -149,7 +149,11 @@ def _assess_health(subscription: dict, alerts: list) -> dict:
 def _sanitize_subscription(item: dict) -> dict:
     """Remove sensitive internal fields before returning to client."""
     sensitive_fields = {"verification_token", "unsubscribe_token", "metadata"}
-    return {k: v for k, v in item.items() if k not in sensitive_fields}
+    sanitized = {k: v for k, v in item.items() if k not in sensitive_fields}
+    # Ensure therapeutic_categories is always present (empty array for legacy subscriptions)
+    if "therapeutic_categories" not in sanitized:
+        sanitized["therapeutic_categories"] = []
+    return sanitized
 
 
 def _response(status_code: int, body: dict) -> dict:

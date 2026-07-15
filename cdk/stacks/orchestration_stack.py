@@ -5,7 +5,7 @@ Deploys:
 - S3 event notification on the data bucket
 - DynamoDB pipeline_runs table (observability)
 - Shared Lambda Layer
-- IAM permissions for Lambda invocation + Step Functions StartExecution
+- IAM permissions for Lambda invocation + Step Functions StartExecution + EventBridge PutEvents
 
 NOTE: Uses bucket name lookup (not cross-stack reference) to avoid
 a CDK dependency cycle with the Ingestion stack.
@@ -14,7 +14,6 @@ from aws_cdk import (
     Stack,
     Duration,
     RemovalPolicy,
-    Fn,
     aws_lambda as _lambda,
     aws_iam as iam,
     aws_dynamodb as dynamodb,
@@ -90,6 +89,7 @@ class OrchestrationStack(Stack):
                 "ALERT_STATE_TABLE": "healthsignals-alert-state",
                 "MAX_COUNTIES_PER_RUN": "20",
                 "LOG_LEVEL": "INFO",
+                "EVENT_BUS_NAME": "default",
             },
             description=(
                 "Pipeline coordinator: chains ingestion → prediction → generation. "
@@ -148,6 +148,16 @@ class OrchestrationStack(Stack):
                     ],
                 )
             )
+
+        # --- Permissions: EventBridge PutEvents (for downstream plugin modules) ---
+        self.coordinator.add_to_role_policy(
+            iam.PolicyStatement(
+                actions=["events:PutEvents"],
+                resources=[
+                    f"arn:aws:events:{self.region}:{self.account}:event-bus/default",
+                ],
+            )
+        )
 
         # --- S3 Event Notification: Trigger on new Delphi data ---
         data_bucket.add_event_notification(

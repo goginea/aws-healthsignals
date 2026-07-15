@@ -1,0 +1,1 @@
+# Shortage Change Detector Lambda

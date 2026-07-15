@@ -1,7 +1,8 @@
 """Update Preferences Handler — Modify subscription settings.
 
 PUT /subscription/update_preferences
-Supports: changing contact info, diseases, delivery channels, pause/resume.
+Supports: changing contact info, diseases, delivery channels, pause/resume,
+and alert category subscriptions for plugin modules.
 """
 import json
 import os
@@ -23,14 +24,20 @@ system = get_system_config()
 SUBSCRIPTIONS_TABLE = os.environ.get(
     "SUBSCRIPTIONS_TABLE", system.get("dynamodb_tables", {}).get("subscriptions", "healthsignals-subscriptions")
 )
+CONFIG_BUCKET = os.environ.get(
+    "CONFIG_BUCKET", system.get("config_bucket", f"healthsignals-data-{os.environ.get('AWS_ACCOUNT_ID', 'unknown')}-{os.environ.get('AWS_REGION', 'us-east-1')}")
+)
+CONFIG_PREFIX = os.environ.get("CONFIG_PREFIX", "config/")
 
 dynamodb = boto3.resource("dynamodb")
 table = dynamodb.Table(SUBSCRIPTIONS_TABLE)
+s3_client = boto3.client("s3")
 
 # Fields that can be updated
 UPDATABLE_FIELDS = {
     "contact_name", "contact_email", "contact_phone",
     "diseases", "delivery_preferences", "pause_until",
+    "alert_categories",
 }
 
 
@@ -45,6 +52,7 @@ def lambda_handler(event: dict, context: Any) -> dict:
             "contact_email": "new.email@county.gov",
             "diseases": ["influenza", "rsv"],
             "delivery_preferences": {"channels": ["email", "sms"], "alert_threshold": "HIGH"},
+            "alert_categories": ["antivirals", "antibiotics"],
             "pause_until": "2026-10-01"  // pause alerts until this date, null to resume
         }
     }
@@ -64,6 +72,17 @@ def lambda_handler(event: dict, context: Any) -> dict:
 
         if not updates:
             return _response(400, {"error": "No updates provided"})
+
+        # Validate alert_categories separately for specific error format
+        if "alert_categories" in updates:
+            categories = updates["alert_categories"]
+            if not isinstance(categories, list):
+                return _response(400, {"error": "alert_categories must be an array"})
+            config = _load_alert_category_config()
+            valid_keys = {cat["category_key"] for cat in config.get("categories", [])}
+            for cat_key in categories:
+                if cat_key not in valid_keys:
+                    return _response(400, {"error": f"Invalid alert category: {cat_key}"})
 
         # Validate the updates
         _validate_updates(updates)
@@ -104,6 +123,14 @@ def lambda_handler(event: dict, context: Any) -> dict:
                     expr_values[":active_status"] = "active"
                     expr_values[":null_val"] = None
                     expr_names["#s"] = "status"
+            elif field == "alert_categories":
+                # Remove duplicates before saving
+                deduped = list(dict.fromkeys(value))
+                safe_key = "#f_alert_categories"
+                val_key = ":v_alert_categories"
+                update_expr_parts.append(f"{safe_key} = {val_key}")
+                expr_names[safe_key] = field
+                expr_values[val_key] = deduped
             else:
                 safe_key = f"#f_{field}"
                 val_key = f":v_{field}"
@@ -191,6 +218,23 @@ def _parse_body(event: dict) -> dict:
     if isinstance(body, str):
         return json.loads(body) if body else {}
     return body or {}
+
+
+def _load_alert_category_config() -> dict:
+    """Load alert category configuration from S3.
+
+    Reads from config/alert_categories.json. This config defines the valid
+    categories that subscribers can opt into for plugin module alerts.
+    Each plugin module registers its categories in this shared config file.
+    """
+    try:
+        config_key = f"{CONFIG_PREFIX}alert_categories.json"
+        response = s3_client.get_object(Bucket=CONFIG_BUCKET, Key=config_key)
+        return json.loads(response["Body"].read().decode("utf-8"))
+    except Exception as e:
+        logger.error(f"Failed to load alert category config: {e}")
+        # Return empty config — no categories available means validation passes vacuously
+        return {"categories": []}
 
 
 def _response(status_code: int, body: dict) -> dict:

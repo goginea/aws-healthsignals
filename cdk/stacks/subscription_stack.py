@@ -21,7 +21,7 @@ from constructs import Construct
 
 
 class SubscriptionStack(Stack):
-    def __init__(self, scope: Construct, construct_id: str, **kwargs) -> None:
+    def __init__(self, scope: Construct, construct_id: str, plugin_gsis: list[dict] = None, **kwargs) -> None:
         super().__init__(scope, construct_id, **kwargs)
 
         # --- Secrets Manager: Token Signing Secret ---
@@ -81,6 +81,20 @@ class SubscriptionStack(Stack):
                 name="county_fips", type=dynamodb.AttributeType.STRING
             ),
         )
+
+        # Plugin GSIs — dynamically added by plugin modules
+        for gsi in (plugin_gsis or []):
+            gsi_kwargs = {
+                "index_name": gsi["index_name"],
+                "partition_key": dynamodb.Attribute(
+                    name=gsi["partition_key"], type=dynamodb.AttributeType.STRING
+                ),
+            }
+            if gsi.get("sort_key"):
+                gsi_kwargs["sort_key"] = dynamodb.Attribute(
+                    name=gsi["sort_key"], type=dynamodb.AttributeType.STRING
+                )
+            self.subscriptions_table.add_global_secondary_index(**gsi_kwargs)
 
         # --- Shared Lambda Environment ---
         lambda_env = {

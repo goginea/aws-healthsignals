@@ -1,0 +1,26 @@
+{
+  "description": "Alert categories available for subscriber opt-in. Plugin modules register their categories here.",
+  "categories": [
+    {
+      "category_key": "antivirals",
+      "display_name": "Antivirals",
+      "module": "drug_shortage",
+      "relevant_diseases": ["influenza", "covid"],
+      "priority_level": "HIGH"
+    },
+    {
+      "category_key": "antibiotics",
+      "display_name": "Antibiotics",
+      "module": "drug_shortage",
+      "relevant_diseases": ["strep"],
+      "priority_level": "MEDIUM"
+    },
+    {
+      "category_key": "respiratory",
+      "display_name": "Respiratory Medications",
+      "module": "drug_shortage",
+      "relevant_diseases": ["rsv", "covid"],
+      "priority_level": "HIGH"
+    }
+  ]
+}

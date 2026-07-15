@@ -14,6 +14,7 @@ Flow:
        a. Invoke geographic_affinity to find affected counties
        b. Invoke timing_estimation for each county
        c. Start Step Functions execution for each county alert
+       d. Emit EventBridge event for downstream modules (e.g., drug shortage enrichment)
     5. Log pipeline execution to DynamoDB (observability)
 
 Design Decisions:
@@ -21,6 +22,7 @@ Design Decisions:
     - ASYNC Step Functions StartExecution for generation (fire-and-forget, SFN handles retries)
     - Circuit breaker: >20 counties in one run triggers human review flag
     - Idempotency: DynamoDB alert_state prevents re-alerting same leader/season
+    - Plugin architecture: downstream modules subscribe to EventBridge events for enrichment
 """
 import json
 import os
@@ -51,6 +53,7 @@ lambda_client = boto3.client("lambda")
 sfn_client = boto3.client("stepfunctions")
 s3_client = boto3.client("s3")
 dynamodb = boto3.resource("dynamodb")
+events_client = boto3.client("events")
 
 # --- Configuration ---
 system = get_system_config()
@@ -76,6 +79,7 @@ PIPELINE_RUNS_TABLE = os.environ.get(
 ALERT_STATE_TABLE = os.environ.get(
     "ALERT_STATE_TABLE", system["dynamodb_tables"]["alert_state"]
 )
+EVENT_BUS_NAME = os.environ.get("EVENT_BUS_NAME", "default")
 
 # Circuit breaker threshold
 MAX_COUNTIES_PER_RUN = int(os.environ.get("MAX_COUNTIES_PER_RUN", "20"))
@@ -188,6 +192,16 @@ def lambda_handler(event: dict, context: Any) -> dict:
                             error = f"SFN start failed for {county_alert.get('county_name')}: {e}"
                             pipeline_results["errors"].append(error)
                             logger.error(error)
+
+                    # Emit EventBridge event for downstream plugin modules
+                    # (e.g., Drug Shortage enrichment for combined alerts)
+                    emit_disease_threshold_event(
+                        disease_key=disease,
+                        state_key=state,
+                        week=week or get_current_epiweek(),
+                        leader=result.get("leader", {}),
+                        county_alerts=counties_alerted,
+                    )
 
             except Exception as e:
                 error = f"Pipeline failed for {state}/{disease}: {str(e)}"
@@ -376,6 +390,11 @@ def run_detection_pipeline(
             "execution_id": execution_id,
         }
         counties_with_timing.append(county_alert)
+
+    # Set alert type for all county alerts (disease_outbreak only — enrichment
+    # with shortage context is handled by downstream modules via EventBridge)
+    for county_alert in counties_with_timing:
+        county_alert["alert_type"] = "disease_outbreak"
 
     return {
         "state": state_key,
@@ -585,6 +604,7 @@ def start_alert_generation(county_alert: dict, execution_id: str) -> dict:
         "warning_window_weeks": county_alert.get("warning_window_weeks", 4),
         "cdc_activity_level": county_alert.get("cdc_activity_level", "unknown"),
         "alert_contacts": county_alert.get("alert_contacts", []),
+        "alert_type": county_alert.get("alert_type", "disease_outbreak"),
         "execution_id": execution_id,
     }
 
@@ -647,3 +667,48 @@ def get_current_epiweek() -> str:
     year = now.strftime("%Y")
     week = now.strftime("%W")
     return f"{year}{week}"
+
+
+def emit_disease_threshold_event(
+    disease_key: str,
+    state_key: str,
+    week: str,
+    leader: dict,
+    county_alerts: list[dict],
+) -> None:
+    """Emit an EventBridge event when a disease threshold is crossed.
+
+    Downstream plugin modules (e.g., Drug Shortage Intelligence) subscribe
+    to this event to enrich alerts with additional context.
+
+    Event detail-type: healthsignals.disease.threshold_crossed
+    Source: healthsignals.pipeline_coordinator
+    """
+    detail = {
+        "disease_key": disease_key,
+        "state_key": state_key,
+        "week": week,
+        "leader": leader,
+        "county_alerts": county_alerts,
+        "emitted_at": datetime.utcnow().isoformat(),
+    }
+
+    try:
+        events_client.put_events(
+            Entries=[
+                {
+                    "Source": "healthsignals.pipeline_coordinator",
+                    "DetailType": "healthsignals.disease.threshold_crossed",
+                    "Detail": json.dumps(detail, default=str),
+                    "EventBusName": EVENT_BUS_NAME,
+                }
+            ]
+        )
+        logger.info(
+            f"Emitted threshold_crossed event for {disease_key}/{state_key} "
+            f"with {len(county_alerts)} county alerts"
+        )
+    except Exception as e:
+        # Don't fail the pipeline if EventBridge emission fails
+        logger.error(f"Failed to emit EventBridge event: {e}")
+

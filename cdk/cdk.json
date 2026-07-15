@@ -18,6 +18,7 @@
     "@aws-cdk/core:target-partitions": ["aws"],
     "region": "us-east-1",
     "project_name": "healthsignals",
-    "alert_sender_email": "alerts@healthsignals.example.com"
+    "alert_sender_email": "alerts@healthsignals.example.com",
+    "enable_drug_shortage": true
   }
 }

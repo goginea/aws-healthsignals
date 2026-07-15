@@ -1,21 +1,27 @@
-"""Alert Dispatcher — Config-driven delivery via SES/SNS with subscription integration.
+"""Alert Dispatcher — Registry-based delivery routing for HealthSignals alerts.
 
-Two delivery paths:
-1. Config-based: Reads contacts from state config (for counties not using subscription API)
-2. Subscription-based: Queries DynamoDB subscriptions table for verified, active subscribers
+Uses a plugin registry pattern: each alert_type maps to a handler function.
+The core module registers "disease_outbreak". Plugin modules register their own
+handlers by placing a module in this directory with a register(context) function
+that returns {alert_type: handler_fn}.
 
-Both paths coexist — subscription table takes priority if a matching record exists.
-Every outbound message includes an unsubscribe link.
+Delivery paths:
+1. disease_outbreak: County-based subscription delivery (core)
+2. Plugin-registered types: Each plugin owns its routing logic
+
+Plugin modules are auto-discovered from DISPATCH_PLUGINS env var (comma-separated
+module names relative to this package, e.g., "shortage_dispatch").
 """
 import json
 import os
 import sys
 import logging
+import importlib
 from datetime import datetime
 from typing import Any
 
 import boto3
-from boto3.dynamodb.conditions import Key, Attr
+from boto3.dynamodb.conditions import Key
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "shared"))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -35,32 +41,102 @@ API_BASE_URL = os.environ.get("API_BASE_URL", "https://api.healthsignals.example
 ses = boto3.client("ses")
 sns = boto3.client("sns")
 dynamodb = boto3.resource("dynamodb")
+dynamodb_client = boto3.client("dynamodb")
 sub_table = dynamodb.Table(SUBSCRIPTIONS_TABLE)
+
+# === Dispatch Handler Registry ===
+# Maps alert_type → handler function. Core registers "disease_outbreak".
+# Plugins register additional types via their register() function.
+_dispatch_registry: dict[str, callable] = {}
+
+
+def _register_core_handlers() -> None:
+    """Register the core disease_outbreak handler."""
+    _dispatch_registry["disease_outbreak"] = _dispatch_disease_outbreak_alert
+
+
+def _load_plugin_handlers() -> None:
+    """Auto-discover and load plugin dispatch modules.
+
+    Reads DISPATCH_PLUGINS env var (comma-separated module names).
+    Each module must expose a register(context) function returning
+    {alert_type: handler_fn}.
+
+    Example: DISPATCH_PLUGINS=shortage_dispatch
+    """
+    plugins_str = os.environ.get("DISPATCH_PLUGINS", "")
+    if not plugins_str:
+        return
+
+    # Build shared context for plugins
+    context = {
+        "sub_table": sub_table,
+        "ses": ses,
+        "sns": sns,
+        "system": system,
+        "api_base_url": API_BASE_URL,
+        "dynamodb": dynamodb,
+    }
+
+    for plugin_name in plugins_str.split(","):
+        plugin_name = plugin_name.strip()
+        if not plugin_name:
+            continue
+        try:
+            # Import plugin module relative to this package directory
+            plugin_module = importlib.import_module(f".{plugin_name}", package=__package__)
+            if hasattr(plugin_module, "register"):
+                handlers = plugin_module.register(context)
+                for alert_type, handler_fn in handlers.items():
+                    _dispatch_registry[alert_type] = handler_fn
+                    logger.info(f"Registered dispatch plugin: {plugin_name} → alert_type={alert_type}")
+            else:
+                logger.warning(f"Plugin {plugin_name} has no register() function, skipping")
+        except Exception as e:
+            logger.error(f"Failed to load dispatch plugin '{plugin_name}': {e}")
+
+
+# Initialize registry at module load time (after all handlers are defined at bottom of file)
+# See end of file for: _register_core_handlers() and _load_plugin_handlers()
 
 
 def lambda_handler(event: dict, context: Any) -> dict:
-    """Dispatch alerts to health officers via subscriptions + config fallback.
+    """Dispatch alerts using the registered handler for the event's alert_type.
 
     Input event (from Step Functions — after alert generation):
     {
+        "alert_type": "disease_outbreak" | "<plugin_type>",
         "disease": "influenza",
-        "severity": "HIGH",
         "county_fips": "48143",
-        "county_name": "Erath County",
-        "state": "texas",
-        "alert_content": {
-            "situation_brief": "...",
-            "checklist": "...",
-            "email_body": "...",
-            "sms_text": "..."
-        },
-        "prediction": {
-            "lag_weeks": 4,
-            "severity_multiplier": 2.1,
-            "confidence": 0.75
-        }
+        "alert_content": {...},
+        ...
     }
     """
+    alert_type = event.get("alert_type", "disease_outbreak")
+
+    handler_fn = _dispatch_registry.get(alert_type)
+
+    if handler_fn is None:
+        logger.error(f"No handler registered for alert_type='{alert_type}'. "
+                     f"Registered types: {list(_dispatch_registry.keys())}")
+        return {
+            "error": f"Unknown alert_type: {alert_type}",
+            "registered_types": list(_dispatch_registry.keys()),
+            "dispatched": False,
+        }
+
+    # Core handler takes (event), plugin handlers take (event, alert_type)
+    if alert_type == "disease_outbreak":
+        return handler_fn(event)
+    else:
+        return handler_fn(event, alert_type)
+
+
+# === Core Disease Outbreak Dispatch ===
+
+
+def _dispatch_disease_outbreak_alert(event: dict) -> dict:
+    """Core disease outbreak alert delivery — county-based subscription lookup."""
     disease = event.get("disease")
     severity = event.get("severity", "MODERATE")
     county_fips = event.get("county_fips")
@@ -70,7 +146,6 @@ def lambda_handler(event: dict, context: Any) -> dict:
     if not county_fips:
         return {"error": "Missing county_fips", "dispatched": False}
 
-    # Get delivery config
     sender_email = system["delivery"]["ses_sender_email"]
     max_sms = system["delivery"]["max_sms_length"]
 
@@ -88,7 +163,6 @@ def lambda_handler(event: dict, context: Any) -> dict:
                     "channels": sub.get("delivery_preferences", {}).get("channels", []),
                     "contact": sub.get("contact_email"),
                 })
-                # Update last_alert_sent
                 _update_last_alert(county_fips, sub["subscription_id"])
             except Exception as e:
                 results["errors"].append({
@@ -128,16 +202,11 @@ def lambda_handler(event: dict, context: Any) -> dict:
     }
 
 
-def _get_active_subscribers(county_fips: str, disease: str, severity: str) -> list:
-    """Query subscriptions table for eligible recipients.
+# === Subscriber Query & Delivery ===
 
-    Filters:
-    - status = "active"
-    - verified_at is not null
-    - disease is in subscription's diseases list
-    - severity >= subscription's alert_threshold
-    - not currently paused (pause_until is null or in the past)
-    """
+
+def _get_active_subscribers(county_fips: str, disease: str, severity: str) -> list:
+    """Query subscriptions table for eligible recipients."""
     try:
         response = sub_table.query(
             KeyConditionExpression=Key("county_fips").eq(county_fips),
@@ -151,28 +220,20 @@ def _get_active_subscribers(county_fips: str, disease: str, severity: str) -> li
     eligible = []
 
     for item in items:
-        # Must be active and verified
         if item.get("status") != "active":
             continue
         if not item.get("verified_at"):
             continue
-
-        # Check pause
         pause_until = item.get("pause_until")
         if pause_until and pause_until > now:
             continue
-
-        # Check disease subscription
         subscribed_diseases = item.get("diseases", [])
         if disease.lower() not in [d.lower() for d in subscribed_diseases]:
             continue
-
-        # Check severity threshold
         prefs = item.get("delivery_preferences", {})
         threshold = prefs.get("alert_threshold", "MODERATE")
         if not _meets_threshold(severity, threshold):
             continue
-
         eligible.append(item)
 
     return eligible
@@ -190,14 +251,11 @@ def _dispatch_to_subscriber(
     subscription_id = subscriber["subscription_id"]
     county_fips = subscriber["county_fips"]
 
-    # Generate unsubscribe URL for this subscriber
     unsub_url = generate_unsubscribe_url(API_BASE_URL, county_fips, subscription_id)
 
     if "email" in channels and email:
         email_body = alert_content.get("email_body", alert_content.get("situation_brief", ""))
-        # Append unsubscribe footer
         email_body += f"\n\n---\nTo unsubscribe from HealthSignals alerts: {unsub_url}"
-
         _send_email(
             sender=sender_email,
             recipient=email,
@@ -245,7 +303,7 @@ def _update_last_alert(county_fips: str, subscription_id: str) -> None:
         logger.warning(f"Failed to update last_alert_sent: {e}")
 
 
-# --- Severity comparison ---
+# === Severity comparison ===
 SEVERITY_ORDER = {"LOW": 1, "MODERATE": 2, "HIGH": 3, "CRITICAL": 4}
 
 
@@ -256,7 +314,7 @@ def _meets_threshold(alert_severity: str, min_threshold: str) -> bool:
     return alert_level >= min_level
 
 
-# --- Delivery methods ---
+# === Delivery methods ===
 def _send_email(sender: str, recipient: str, subject: str, body: str) -> None:
     """Send alert email via SES."""
     ses.send_email(
@@ -284,3 +342,8 @@ def _send_sms(phone_number: str, message: str) -> None:
         },
     )
     logger.info(f"SMS sent to {phone_number}")
+
+
+# === Initialize Registry (must be after all handler functions are defined) ===
+_register_core_handlers()
+_load_plugin_handlers()

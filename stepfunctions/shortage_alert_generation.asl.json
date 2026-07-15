@@ -1,0 +1,142 @@
+{
+  "Comment": "Drug Shortage Intelligence — Alert Generation Workflow. Handles standalone shortage alerts and combined disease+shortage alerts. Uses Bedrock Claude Sonnet 4.5 for brief generation. Plugin module: deployed only when enable_drug_shortage is true.",
+  "StartAt": "DetermineShortageAlertType",
+  "States": {
+    "DetermineShortageAlertType": {
+      "Type": "Choice",
+      "Comment": "Route between standalone shortage brief and combined disease+shortage brief.",
+      "Choices": [
+        {
+          "Variable": "$.alert_type",
+          "StringEquals": "combined",
+          "Next": "CombinedSignalBrief"
+        }
+      ],
+      "Default": "ShortageAlertBrief"
+    },
+
+    "ShortageAlertBrief": {
+      "Type": "Task",
+      "Comment": "Generate shortage situation brief for standalone shortage alerts using Claude Sonnet 4.5",
+      "Resource": "arn:aws:states:::bedrock:invokeModel",
+      "Parameters": {
+        "ModelId": "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+        "ContentType": "application/json",
+        "Accept": "application/json",
+        "Body": {
+          "anthropic_version": "bedrock-2023-05-31",
+          "max_tokens": 2000,
+          "system": "You are a pharmaceutical supply chain analyst generating shortage situation briefs for pharmacists at rural health facilities. Your role is to synthesize drug shortage data into clear, actionable intelligence that helps pharmacists manage inventory and coordinate with prescribers proactively.\n\nGenerate a concise shortage situation brief (400-600 words) structured with the following sections:\n1. EXECUTIVE SUMMARY — 2-3 sentences describing the overall shortage situation for the therapeutic category this week\n2. AFFECTED MEDICATIONS — List of drugs experiencing NEW or WORSENING shortages with product names\n3. SUPPLY STATUS — Current supply status for each affected medication with reason for shortage\n4. RESOLUTION TIMELINE — Estimated resolution dates where available, or 'No estimated date provided' if unknown\n5. PHARMACIST ACTIONS — Recommended operational actions (inventory review, prescriber communication, patient notification planning)\n\nMandatory Constraints:\n- Do NOT provide specific drug substitution recommendations or clinical guidance\n- Do NOT suggest therapeutic alternatives or equivalent medications\n- Do NOT recommend changes to patient treatment plans\n- Always include disclaimer: FOR PHARMACIST REVIEW ONLY\n- Frame all actions as OPERATIONAL PREPAREDNESS, not clinical decision-making\n- NEVER state shortage durations as certainties — use 'FDA estimates', 'based on reported data', 'subject to change'\n\nFollow CDC CERC communication principles: Be first, be right, be credible, express empathy, promote action, show respect. Use professional, non-alarmist, factual language appropriate for licensed pharmacists.\n\nGrounding Rules:\n- Only reference data actually provided in the input\n- Do not hallucinate specific dates, quantities, or manufacturer names not in the input\n- If estimated_resolution_date is null, say 'No estimated resolution date provided by FDA'\n- If reason_for_shortage is 'Unknown' or empty, say 'Reason not disclosed by manufacturer'\n- Reference source as 'FDA Drug Shortage Database'",
+          "messages": [
+            {
+              "role": "user",
+              "content.$": "States.Format('Generate a shortage situation brief for the following drug shortage data. Therapeutic category: {}. Week: {}. Affected products: {}', $.therapeutic_category, $.week_timestamp, States.JsonToString($.affected_products))"
+            }
+          ],
+          "thinking": {
+            "type": "disabled"
+          }
+        }
+      },
+      "ResultPath": "$.shortage_brief_result",
+      "Retry": [
+        {
+          "ErrorEquals": ["Bedrock.ThrottlingException"],
+          "IntervalSeconds": 5,
+          "MaxAttempts": 3,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
+          "Next": "ShortageGenerationFailed"
+        }
+      ],
+      "Next": "DispatchShortageAlert"
+    },
+
+    "CombinedSignalBrief": {
+      "Type": "Task",
+      "Comment": "Generate combined disease outbreak + drug shortage situation brief using Claude Sonnet 4.5",
+      "Resource": "arn:aws:states:::bedrock:invokeModel",
+      "Parameters": {
+        "ModelId": "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+        "ContentType": "application/json",
+        "Accept": "application/json",
+        "Body": {
+          "anthropic_version": "bedrock-2023-05-31",
+          "max_tokens": 3000,
+          "system": "You are a public health surveillance analyst generating combined disease outbreak and drug shortage alerts for rural health officers. Your role is to produce enriched disease outbreak situation briefs that include pharmaceutical supply context, helping county health departments understand both the epidemiological threat and any medication availability constraints simultaneously.\n\nGenerate a combined situation brief with the following structure:\n\nSection 1: DISEASE OUTBREAK SUMMARY (PRIMARY)\n- What metropolitan signal was detected (city, level, trend)\n- What this historically means for the recipient's county\n- Estimated preparation window with confidence level\n- Number of calibration seasons supporting the prediction\n\nSection 2: MEDICATION AVAILABILITY ALERT (SUPPLEMENTAL)\n- Which medications relevant to this disease are currently in shortage\n- Current supply status for each affected medication\n- Reason for shortage (demand increase, manufacturing, etc.)\n- Estimated resolution timeline if available\n\nSection 3: COMBINED PREPAREDNESS ACTIONS\n- Integrated preparation recommendations accounting for both outbreak timeline and medication supply constraints\n\nMandatory Constraints:\n- PRIORITIZE disease outbreak information as the PRIMARY content\n- Present shortage context as SUPPLEMENTAL preparedness intelligence only\n- Do NOT provide specific drug substitution recommendations\n- Do NOT recommend specific alternative medications or treatment protocols\n- NEVER state predictions as certainties — use 'historical patterns suggest', 'based on N past seasons'\n- ALWAYS include the number of calibration seasons backing the prediction\n- Frame everything as PREPARATION guidance, not clinical action\n- ALWAYS include disclaimer: 'FOR PHARMACIST REVIEW ONLY — Medication availability information' in the Medication Availability Alert section\n\nFollow CDC CERC communication principles: Be first, be right, be credible, express empathy, promote action, show respect. Professional, non-alarmist, factual language at 8th grade reading level.\n\nGrounding Rules:\n- Only reference data actually provided in the input\n- Do not hallucinate dates, percentages, medication names, or historical events\n- Reference disease surveillance source as 'CMU Delphi syndromic surveillance data'\n- Reference shortage data source as 'FDA Drug Shortages Database'\n- If shortage_context contains no affected medications, omit the Medication Availability Alert section",
+          "messages": [
+            {
+              "role": "user",
+              "content.$": "States.Format('Generate a combined disease outbreak and drug shortage situation brief. Disease data: County: {}, Disease: {}, Leader metro: {}, Signal level: {}%, Estimated arrival: {} weeks, Confidence: {}%, Calibration seasons: {}. Shortage context: {}', $.county_name, $.disease, $.leader_metro_name, $.leader_value, $.lag_weeks, $.confidence, $.seasons_calibrated, States.JsonToString($.shortage_context))"
+            }
+          ],
+          "thinking": {
+            "type": "disabled"
+          }
+        }
+      },
+      "ResultPath": "$.combined_brief_result",
+      "Retry": [
+        {
+          "ErrorEquals": ["Bedrock.ThrottlingException"],
+          "IntervalSeconds": 5,
+          "MaxAttempts": 3,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
+          "Next": "ShortageGenerationFailed"
+        }
+      ],
+      "Next": "DispatchShortageAlert"
+    },
+
+    "DispatchShortageAlert": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "healthsignals-alert-dispatcher",
+        "Payload.$": "$"
+      },
+      "ResultPath": "$.delivery_result",
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "Lambda.ServiceException",
+            "Lambda.TooManyRequestsException"
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
+          "Next": "ShortageGenerationFailed"
+        }
+      ],
+      "Next": "ShortageAlertSucceeded"
+    },
+
+    "ShortageAlertSucceeded": {
+      "Type": "Succeed",
+      "Comment": "Shortage alert generated and dispatched successfully"
+    },
+
+    "ShortageGenerationFailed": {
+      "Type": "Fail",
+      "Cause": "Shortage alert generation pipeline failed",
+      "Error": "ShortageGenerationError"
+    }
+  }
+}
