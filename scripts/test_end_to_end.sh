@@ -102,9 +102,18 @@ ORIGINAL_CONFIG="/tmp/healthsignals_test_original.json"
 MODIFIED_CONFIG="/tmp/healthsignals_test_modified.json"
 
 aws s3 cp "s3://${BUCKET}/${CONFIG_KEY}" "$ORIGINAL_CONFIG" --quiet
-sed 's/"threshold_pct_ed_visits": [0-9.]*/"threshold_pct_ed_visits": 0.01/' "$ORIGINAL_CONFIG" > "$MODIFIED_CONFIG"
+# Lower threshold AND disable rising trend requirement (for off-season testing)
+python3 -c "
+import json
+with open('$ORIGINAL_CONFIG') as f:
+    d = json.load(f)
+d['detection']['threshold_pct_ed_visits'] = 0.01
+d['detection']['require_rising_trend'] = False
+with open('$MODIFIED_CONFIG', 'w') as f:
+    json.dump(d, f, indent=2)
+"
 aws s3 cp "$MODIFIED_CONFIG" "s3://${BUCKET}/${CONFIG_KEY}" --quiet
-echo -e "${GREEN}  ✓ Threshold set to 0.01% (will trigger on any real data)${NC}"
+echo -e "${GREEN}  ✓ Threshold set to 0.01% and rising trend requirement disabled${NC}"
 echo ""
 
 # --- Clear alert state ---
@@ -132,14 +141,21 @@ aws dynamodb delete-item \
     --key '{"county_fips": {"S": "LEADER_48029"}, "disease_season": {"S": "influenza_2026-27"}}' \
     2>/dev/null || true
 
-# Force cold start on leader_detection to pick up new threshold
-aws lambda update-function-configuration \
-    --function-name healthsignals-leader-detection \
-    --environment "$(aws lambda get-function-configuration --function-name healthsignals-leader-detection --query 'Environment' --output json | sed 's/"CACHE_BUST":"[^"]*"/"CACHE_BUST":"'$(date +%s)'"/' | if ! grep -q CACHE_BUST; then echo '{}'; else cat; fi)" \
+# Force cold starts on all prediction Lambdas and pipeline coordinator
+# by adding/updating a CACHE_BUST environment variable
+CACHE_VAL=$(date +%s)
+for FUNC in healthsignals-leader-detection healthsignals-pipeline-coordinator; do
+  # Get current env vars, add CACHE_BUST
+  CURRENT_ENV=$(aws lambda get-function-configuration --function-name "$FUNC" --query 'Environment.Variables' --output json 2>/dev/null || echo '{}')
+  NEW_ENV=$(echo "$CURRENT_ENV" | python3 -c "import sys,json; d=json.loads(sys.stdin.read()); d['CACHE_BUST']='$CACHE_VAL'; print(json.dumps({'Variables':d}))")
+  aws lambda update-function-configuration \
+    --function-name "$FUNC" \
+    --environment "$NEW_ENV" \
     --query 'FunctionName' --output text > /dev/null 2>&1 || true
+done
 
-sleep 3
-echo -e "${GREEN}  ✓ Alert state cleared, Lambda cache busted${NC}"
+sleep 5
+echo -e "${GREEN}  ✓ Alert state cleared, Lambda caches invalidated${NC}"
 echo ""
 
 # --- Invoke pipeline ---
