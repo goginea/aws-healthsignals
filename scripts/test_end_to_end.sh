@@ -87,10 +87,16 @@ ORIGINAL_CONFIG=""
 cleanup() {
     if [ -n "$ORIGINAL_CONFIG" ] && [ -f "$ORIGINAL_CONFIG" ]; then
         echo ""
-        echo -e "${YELLOW}[8/8] Restoring original threshold...${NC}"
+        echo -e "${YELLOW}[9/9] Restoring original state...${NC}"
         # Restore original (unchanged) config
         aws s3 cp "$ORIGINAL_CONFIG" "s3://${BUCKET}/${CONFIG_KEY}" --quiet
-        echo -e "${GREEN}  ✓ Threshold restored to original value${NC}"
+        # Remove test subscription if created
+        if [ -n "$TEST_SUB_ID" ] && [ -n "$TEST_EMAIL" ]; then
+            aws dynamodb delete-item --table-name healthsignals-subscriptions \
+                --key '{"county_fips": {"S": "48143"}, "subscription_id": {"S": "'$TEST_SUB_ID'"}}' \
+                2>/dev/null || true
+        fi
+        echo -e "${GREEN}  ✓ Threshold restored, test subscription removed${NC}"
         rm -f "$ORIGINAL_CONFIG" /tmp/healthsignals_test_*.json
     fi
 }
@@ -158,8 +164,35 @@ sleep 5
 echo -e "${GREEN}  ✓ Alert state cleared, Lambda caches invalidated${NC}"
 echo ""
 
+# --- Create temporary test subscription ---
+echo -e "${YELLOW}[4/9] Creating temporary test subscription for Erath County...${NC}"
+TEST_SUB_ID="e2e-test-$(date +%s)"
+TEST_EMAIL="${HEALTHSIGNALS_TEST_EMAIL:-}"
+
+if [ -z "$TEST_EMAIL" ]; then
+    echo -e "${YELLOW}  ⚠ HEALTHSIGNALS_TEST_EMAIL not set. Alert will be generated but not delivered.${NC}"
+    echo "  Set HEALTHSIGNALS_TEST_EMAIL=your@email.com to receive the test alert."
+else
+    aws dynamodb put-item --table-name healthsignals-subscriptions --item '{
+      "county_fips": {"S": "48143"},
+      "subscription_id": {"S": "'$TEST_SUB_ID'"},
+      "county_name": {"S": "Erath County"},
+      "state": {"S": "texas"},
+      "contact_name": {"S": "E2E Test"},
+      "contact_email": {"S": "'$TEST_EMAIL'"},
+      "diseases": {"L": [{"S": "influenza"}, {"S": "rsv"}, {"S": "covid"}]},
+      "delivery_preferences": {"M": {"channels": {"L": [{"S": "email"}]}, "alert_threshold": {"S": "LOW"}}},
+      "status": {"S": "active"},
+      "verified_at": {"S": "2026-01-01T00:00:00"},
+      "created_at": {"S": "2026-01-01T00:00:00"},
+      "updated_at": {"S": "2026-01-01T00:00:00"}
+    }' 2>/dev/null
+    echo -e "${GREEN}  ✓ Test subscription created (${TEST_EMAIL})${NC}"
+fi
+echo ""
+
 # --- Invoke pipeline ---
-echo -e "${YELLOW}[4/8] Invoking pipeline coordinator...${NC}"
+echo -e "${YELLOW}[5/9] Invoking pipeline coordinator...${NC}"
 PAYLOAD='{"source": "manual", "state_key": "texas", "disease_key": "influenza", "week": "202645"}'
 INVOKE_RESULT=$(aws lambda invoke \
     --function-name "$LAMBDA_NAME" \
@@ -182,7 +215,7 @@ echo -e "${GREEN}  ✓ Pipeline triggered ${ALERTS_TRIGGERED} alert(s)${NC}"
 echo ""
 
 # --- Get SFN execution ARN ---
-echo -e "${YELLOW}[5/8] Getting Step Functions execution...${NC}"
+echo -e "${YELLOW}[6/9] Getting Step Functions execution...${NC}"
 sleep 2
 EXEC_ARN=$(aws stepfunctions list-executions \
     --state-machine-arn "$SFN_ARN" \
@@ -200,7 +233,7 @@ echo "  Execution: ${EXEC_NAME}"
 echo ""
 
 # --- Poll for completion ---
-echo -e "${YELLOW}[6/8] Waiting for Bedrock to generate alert (up to 60s)...${NC}"
+echo -e "${YELLOW}[7/9] Waiting for Bedrock to generate alert (up to 60s)...${NC}"
 MAX_ATTEMPTS=24
 POLL_INTERVAL=5
 ATTEMPT=0
@@ -218,7 +251,7 @@ done
 echo ""
 
 # --- Report results ---
-echo -e "${YELLOW}[7/8] Results:${NC}"
+echo -e "${YELLOW}[8/9] Results:${NC}"
 echo ""
 
 if [ "$STATUS" = "SUCCEEDED" ]; then

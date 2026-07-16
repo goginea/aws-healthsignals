@@ -25,19 +25,21 @@ cdk bootstrap aws://ACCOUNT_ID/us-east-1
 
 > If `cdk` is not in your PATH, use `npx aws-cdk bootstrap` or the full path to the CDK binary.
 
-### Step 3: Configure Plugin Modules (optional)
+### Step 3: Configure Plugin Modules and Sender Email
 
-Edit `cdk/cdk.json` to enable or disable optional modules:
+Edit `cdk/cdk.json` to configure:
 
 ```json
 {
   "context": {
-    "enable_drug_shortage": true
+    "enable_drug_shortage": true,
+    "alert_sender_email": "your-verified-sender@yourdomain.com"
   }
 }
 ```
 
-Set `false` to deploy core-only (7 stacks). Set `true` to include the Drug Shortage Intelligence module (8 stacks).
+- `enable_drug_shortage`: Set `false` for core-only (7 stacks), `true` to include Drug Shortage (8 stacks)
+- `alert_sender_email`: **Must be a verified SES identity** (email or domain). Alerts will not deliver without this. Verify it in Step 11.
 
 ### Step 4: Deploy All Stacks
 
@@ -281,28 +283,34 @@ Create a guardrail to block clinical treatment recommendations:
 ## End-to-End Testing
 
 ```bash
+# Set your verified SES email to receive the test alert (optional but recommended)
+export HEALTHSIGNALS_TEST_EMAIL=your-verified@email.com
+
 chmod +x scripts/test_end_to_end.sh
 ./scripts/test_end_to_end.sh
 ```
 
 **What the script does:**
 
-1. Temporarily lowers the flu threshold to 0.01% AND disables `require_rising_trend`
-2. Clears alert state for the test season
-3. Forces cold starts on prediction Lambdas (cache invalidation)
-4. Invokes the pipeline coordinator
-5. Polls Step Functions until completion
-6. Reports PASS/FAIL with generated alert preview
-7. Restores original config (even on failure)
+1. Checks prerequisites (AWS CLI, Lambda exists, config in S3, Delphi data)
+2. Temporarily lowers the flu threshold to 0.01% AND disables `require_rising_trend`
+3. Clears alert state for the test season and invalidates Lambda caches
+4. Creates a temporary test subscription for Erath County (if `HEALTHSIGNALS_TEST_EMAIL` is set)
+5. Invokes the pipeline coordinator
+6. Polls Step Functions until completion
+7. Reports PASS/FAIL with generated alert preview
+8. Restores original config and removes the test subscription
 
-**Duration:** ~45 seconds. **Cost:** ~$0.10 in Bedrock tokens.
+**Duration:** ~90 seconds. **Cost:** ~$0.10 in Bedrock tokens.
 
-**Important:** The script forces Lambda cold starts by updating an environment variable (`CACHE_BUST`). This ensures the new threshold is picked up immediately. Both the pipeline coordinator and leader_detection Lambda must be cold-started.
+**Environment variable:**
+
+- `HEALTHSIGNALS_TEST_EMAIL` — set to a verified SES email address to receive the alert. If not set, the pipeline runs end-to-end but delivery is skipped (no subscriber exists for the test county).
 
 **If the test reports "No alerts triggered":**
 
 - Verify Delphi data exists: `aws s3 ls s3://${BUCKET}/raw/delphi/ --recursive | tail -5`
-- Check if `require_rising_trend` was properly disabled (trend must be "rising" or config must have `false`)
+- Check Lambda caches were invalidated (script does this automatically)
 - Manually invoke leader_detection with test data to isolate the issue (see Troubleshooting)
 
 ---

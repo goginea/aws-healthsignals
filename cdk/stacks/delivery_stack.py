@@ -86,6 +86,7 @@ class DeliveryStack(Stack):
                 "DISPATCH_PLUGINS": plugin_dispatch_modules,
                 "CONFIG_BUCKET": f"healthsignals-data-{self.account}-{self.region}",
                 "CONFIG_PREFIX": "config/",
+                "TOKEN_SECRET_ARN": f"arn:aws:secretsmanager:{self.region}:{self.account}:secret:healthsignals/token-signing-key",
                 **(plugin_env_vars or {}),
             },
         )
@@ -123,6 +124,15 @@ class DeliveryStack(Stack):
             iam.PolicyStatement(
                 actions=["s3:GetObject"],
                 resources=[f"arn:aws:s3:::healthsignals-data-{self.account}-{self.region}/config/*"],
+            )
+        )
+        # Token signing secret — needed for generating unsubscribe URLs in alert emails
+        self.alert_dispatcher.add_to_role_policy(
+            iam.PolicyStatement(
+                actions=["secretsmanager:GetSecretValue"],
+                resources=[
+                    f"arn:aws:secretsmanager:{self.region}:{self.account}:secret:healthsignals/token-signing-key-*",
+                ],
             )
         )
 
