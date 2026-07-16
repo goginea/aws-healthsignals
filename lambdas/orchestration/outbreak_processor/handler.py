@@ -37,6 +37,7 @@ if os.path.exists(_shared_path):
     sys.path.insert(0, _lambdas_path)
 
 from shared.config_loader import list_active_states, get_state_config
+from shared.geo_utils import normalize_state_names
 
 logger = logging.getLogger()
 logger.setLevel(os.environ.get("LOG_LEVEL", "INFO"))
@@ -188,78 +189,3 @@ def start_alert_generation(sfn_input: dict) -> str | None:
         logger.error(f"SFN start failed for {state_key}: {e}")
         return None
 
-
-# === State Name Normalization ===
-
-# Comprehensive mapping: various forms → lowercase state key
-STATE_LOOKUP = {
-    # Full names (lowercase)
-    "alabama": "alabama", "alaska": "alaska", "arizona": "arizona",
-    "arkansas": "arkansas", "california": "california", "colorado": "colorado",
-    "connecticut": "connecticut", "delaware": "delaware", "florida": "florida",
-    "georgia": "georgia", "hawaii": "hawaii", "idaho": "idaho",
-    "illinois": "illinois", "indiana": "indiana", "iowa": "iowa",
-    "kansas": "kansas", "kentucky": "kentucky", "louisiana": "louisiana",
-    "maine": "maine", "maryland": "maryland", "massachusetts": "massachusetts",
-    "michigan": "michigan", "minnesota": "minnesota", "mississippi": "mississippi",
-    "missouri": "missouri", "montana": "montana", "nebraska": "nebraska",
-    "nevada": "nevada", "new hampshire": "new hampshire", "new jersey": "new jersey",
-    "new mexico": "new mexico", "new york": "new york",
-    "north carolina": "north carolina", "north dakota": "north dakota",
-    "ohio": "ohio", "oklahoma": "oklahoma", "oregon": "oregon",
-    "pennsylvania": "pennsylvania", "rhode island": "rhode island",
-    "south carolina": "south carolina", "south dakota": "south dakota",
-    "tennessee": "tennessee", "texas": "texas", "utah": "utah",
-    "vermont": "vermont", "virginia": "virginia", "washington": "washington",
-    "west virginia": "west virginia", "wisconsin": "wisconsin", "wyoming": "wyoming",
-    "district of columbia": "district of columbia",
-    # 2-letter postal codes
-    "al": "alabama", "ak": "alaska", "az": "arizona", "ar": "arkansas",
-    "ca": "california", "co": "colorado", "ct": "connecticut", "de": "delaware",
-    "fl": "florida", "ga": "georgia", "hi": "hawaii", "id": "idaho",
-    "il": "illinois", "in": "indiana", "ia": "iowa", "ks": "kansas",
-    "ky": "kentucky", "la": "louisiana", "me": "maine", "md": "maryland",
-    "ma": "massachusetts", "mi": "michigan", "mn": "minnesota", "ms": "mississippi",
-    "mo": "missouri", "mt": "montana", "ne": "nebraska", "nv": "nevada",
-    "nh": "new hampshire", "nj": "new jersey", "nm": "new mexico", "ny": "new york",
-    "nc": "north carolina", "nd": "north dakota", "oh": "ohio", "ok": "oklahoma",
-    "or": "oregon", "pa": "pennsylvania", "ri": "rhode island",
-    "sc": "south carolina", "sd": "south dakota", "tn": "tennessee",
-    "tx": "texas", "ut": "utah", "vt": "vermont", "va": "virginia",
-    "wa": "washington", "wv": "west virginia", "wi": "wisconsin", "wy": "wyoming",
-    "dc": "district of columbia",
-    # Common abbreviations
-    "n. carolina": "north carolina", "n carolina": "north carolina",
-    "s. carolina": "south carolina", "s carolina": "south carolina",
-    "n. dakota": "north dakota", "n dakota": "north dakota",
-    "s. dakota": "south dakota", "s dakota": "south dakota",
-    "n. hampshire": "new hampshire", "n hampshire": "new hampshire",
-    "n. jersey": "new jersey", "n jersey": "new jersey",
-    "n. mexico": "new mexico", "n mexico": "new mexico",
-    "n. york": "new york", "n york": "new york",
-    "w. virginia": "west virginia", "w virginia": "west virginia",
-    "r. island": "rhode island", "r island": "rhode island",
-    "d.c.": "district of columbia", "d.c": "district of columbia",
-}
-
-
-def normalize_state_names(raw_states: list[str]) -> list[str]:
-    """Normalize a list of state names to lowercase state keys.
-
-    Handles: full names, 2-letter postal codes, common abbreviations.
-    Skips unrecognized values with a warning.
-    """
-    normalized = []
-    for raw in raw_states:
-        key = raw.strip().lower()
-        # Remove trailing periods
-        key = key.rstrip(".")
-
-        state_key = STATE_LOOKUP.get(key)
-        if state_key:
-            if state_key not in normalized:
-                normalized.append(state_key)
-        else:
-            logger.warning(f"Unrecognized state name: '{raw}' — skipping")
-
-    return normalized
