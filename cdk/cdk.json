@@ -19,6 +19,7 @@
     "region": "us-east-1",
     "project_name": "healthsignals",
     "alert_sender_email": "alerts@healthsignals.example.com",
-    "enable_drug_shortage": true
+    "enable_drug_shortage": true,
+    "enable_cdc_outbreak_alerts": true
   }
 }

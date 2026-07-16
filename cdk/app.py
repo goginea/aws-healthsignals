@@ -12,6 +12,7 @@ Deploys the complete HealthSignals Bedrock Blueprint infrastructure:
 
 Optional plugin modules (controlled by context flags):
 - Drug Shortage Intelligence: openFDA polling, change detection, shortage alerts
+- CDC Outbreak Alerts: RSS polling, Bedrock extraction, state-based alerting
 """
 import aws_cdk as cdk
 
@@ -35,6 +36,9 @@ env = cdk.Environment(
 # Fallback to True so the module is enabled by default when context is unavailable.
 _shortage_ctx = app.node.try_get_context("enable_drug_shortage")
 enable_drug_shortage = bool(_shortage_ctx) if _shortage_ctx is not None else True
+
+_outbreak_ctx = app.node.try_get_context("enable_cdc_outbreak_alerts")
+enable_cdc_outbreak_alerts = bool(_outbreak_ctx) if _outbreak_ctx is not None else True
 
 # Stack deployment order matters — dependencies flow top to bottom
 ingestion = IngestionStack(app, "HealthSignals-Ingestion", env=env)
@@ -72,6 +76,15 @@ if enable_drug_shortage:
         "partition_key": "alert_category",
         "sort_key": "county_fips",
     })
+
+if enable_cdc_outbreak_alerts:
+    # CDC Outbreak plugin registers its dispatch module
+    if _plugin_dispatch_modules:
+        _plugin_dispatch_modules += ",outbreak_dispatch"
+    else:
+        _plugin_dispatch_modules = "outbreak_dispatch"
+    # No additional table ARNs needed (uses state-index GSI already on subscriptions table)
+    # No additional GSIs needed (reuses existing state-index)
 
 delivery = DeliveryStack(
     app,
@@ -112,5 +125,19 @@ if enable_drug_shortage:
     shortage.add_dependency(ingestion)   # Needs S3 bucket to exist
     shortage.add_dependency(generation)  # Needs state machine for alert generation
     shortage.add_dependency(monitoring)  # Needs ops topic for alarm actions
+
+# --- Optional Plugin: CDC Outbreak Alerts ---
+if enable_cdc_outbreak_alerts:
+    from stacks.cdc_outbreak_alerts_stack import CDCOutbreakAlertsStack
+
+    cdc_outbreaks = CDCOutbreakAlertsStack(
+        app,
+        "HealthSignals-CDCOutbreaks",
+        data_bucket_name=ingestion.data_bucket.bucket_name,
+        ops_topic_arn=monitoring.ops_topic.topic_arn,
+        env=env,
+    )
+    cdc_outbreaks.add_dependency(ingestion)   # Needs S3 bucket
+    cdc_outbreaks.add_dependency(monitoring)  # Needs ops topic
 
 app.synth()
