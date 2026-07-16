@@ -208,6 +208,14 @@ aws ses verify-email-identity --email-address your-alerts@yourdomain.com
 
 Update `alert_sender_email` in `cdk/cdk.json` context to match your verified email, then redeploy the Delivery stack.
 
+> **SES Sandbox Note:** New AWS accounts start in SES sandbox mode. In sandbox, you can only send emails to verified addresses (both sender AND recipient must be verified). To test delivery, verify the recipient email too:
+>
+> ```bash
+> aws ses verify-email-identity --email-address recipient@example.com
+> ```
+>
+> For production use, request SES production access in the AWS console (SES > Account dashboard > Request production access). This removes the recipient verification requirement.
+
 ---
 
 ## Deploying the Drug Shortage Module After Core
