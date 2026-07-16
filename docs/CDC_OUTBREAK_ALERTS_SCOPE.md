@@ -21,6 +21,7 @@ This is the most reliable structured source for CDC outbreak notifications:
 - Public, no auth required, no rate limits documented
 
 **What the RSS provides:**
+
 ```xml
 <item>
   <title>Cyclosporiasis Outbreak with Unknown Source</title>
@@ -32,11 +33,13 @@ This is the most reliable structured source for CDC outbreak notifications:
 ```
 
 **What the RSS does NOT provide:**
+
 - Affected states/counties (must be scraped from the linked outbreak investigation page)
 - Case counts
 - Severity level
 
 **Supplementary source:** Each outbreak item links to a detailed investigation page (e.g., `cdc.gov/cyclosporiasis/outbreaks/07-26/index.html`) that contains:
+
 - Affected states
 - Case counts
 - Onset dates
@@ -44,13 +47,13 @@ This is the most reliable structured source for CDC outbreak notifications:
 
 ### Alternative Sources Considered
 
-| Source | Pros | Cons | Decision |
-|--------|------|------|----------|
-| CDC Outbreaks RSS | Structured XML, near-real-time, reliable | No state/county data in feed itself | **Primary** — use as trigger |
-| CDC HAN RSS | Official alert channel | Feed appears stale (last build Mar 2025), less frequent | Skip |
-| CDC Outbreak investigation pages (HTML) | Has states, case counts, severity | Unstructured HTML, requires scraping, fragile | **Secondary** — scrape for enrichment |
-| NORS Dashboard / data.cdc.gov | Historical structured data | Reporting lag (weeks/months), not real-time | Skip for alerting |
-| CDC Food Safety RSS | Includes FDA recalls | Mixed content (recalls + outbreaks) | Skip |
+| Source                                  | Pros                                     | Cons                                                    | Decision                              |
+| --------------------------------------- | ---------------------------------------- | ------------------------------------------------------- | ------------------------------------- |
+| CDC Outbreaks RSS                       | Structured XML, near-real-time, reliable | No state/county data in feed itself                     | **Primary** — use as trigger          |
+| CDC HAN RSS                             | Official alert channel                   | Feed appears stale (last build Mar 2025), less frequent | Skip                                  |
+| CDC Outbreak investigation pages (HTML) | Has states, case counts, severity        | Unstructured HTML, requires scraping, fragile           | **Secondary** — scrape for enrichment |
+| NORS Dashboard / data.cdc.gov           | Historical structured data               | Reporting lag (weeks/months), not real-time             | Skip for alerting                     |
+| CDC Food Safety RSS                     | Includes FDA recalls                     | Mixed content (recalls + outbreaks)                     | Skip                                  |
 
 ### Chosen Architecture
 
@@ -91,6 +94,7 @@ CDC Outbreaks RSS (poll daily)
 ### What Bedrock Generates
 
 A situation brief tailored for foodborne outbreaks:
+
 - What: disease name, source food (if known), symptoms
 - Where: affected states
 - Scale: case count, hospitalization count
@@ -130,25 +134,29 @@ tests/unit/test_outbreak_dispatch.py
 ### Task Group 3: RSS Fetcher Lambda
 
 - [ ] **3.1** Create `lambdas/ingestion/cdc_outbreak_fetcher/handler.py` — polls RSS feed, parses XML, compares against DynamoDB state, identifies NEW/UPDATED outbreaks
-- [ ] **3.2** For each new/updated outbreak: fetch the linked investigation page HTML, extract affected states and case counts using simple regex/string parsing
-- [ ] **3.3** Store parsed outbreak data in S3: `raw/cdc-outbreaks/{date}/{outbreak_id}.json`
-- [ ] **3.4** Trigger outbreak processor (direct Lambda invoke or S3 event)
+- [ ] **3.2** For each new/updated outbreak: fetch the linked investigation page HTML content (text extraction, strip tags)
+- [ ] **3.3** Invoke Bedrock to extract structured data from page content: affected states, case count, hospitalizations, source food, onset date, severity indicators
+- [ ] **3.4** Store parsed outbreak data in S3: `raw/cdc-outbreaks/{date}/{outbreak_id}.json`
+- [ ] **3.5** Invoke outbreak processor Lambda with the structured data
 
 ### Task Group 4: Outbreak Processor Lambda
 
-- [ ] **4.1** Create `lambdas/orchestration/outbreak_processor/handler.py` — reads parsed outbreak data, resolves affected states to subscribing counties, starts Step Functions for each state
-- [ ] **4.2** No leader detection, no affinity, no timing — simply maps states → counties from existing state configs
-- [ ] **4.3** Passes outbreak context to Step Functions: disease, affected_states, case_count, source_food, cdc_link, severity
+- [ ] **4.1** Create `lambdas/orchestration/outbreak_processor/handler.py` — reads parsed outbreak data, normalizes state names (lowercase mapping), resolves to subscribing counties
+- [ ] **4.2** No leader detection, no affinity, no timing — maps CDC-stated states → counties from existing state configs
+- [ ] **4.3** For updates: compares current affected_states against DynamoDB history, marks newly added states
+- [ ] **4.4** Starts Step Functions with outbreak context: disease, affected_states, new_states, case_count, source_food, cdc_link, severity (from Bedrock classification)
 
 ### Task Group 5: Step Functions (own state machine)
 
-- [ ] **5.1** Create `stepfunctions/outbreak_alert_generation.asl.json` — Bedrock generates foodborne outbreak situation brief, then dispatches
-- [ ] **5.2** Bedrock prompt: foodborne-specific (food safety guidance, symptom awareness, reporting instructions, NOT clinical treatment)
+- [ ] **5.1** Create `stepfunctions/outbreak_alert_generation.asl.json` — two Bedrock steps: (1) severity classification with grounding rules, (2) situation brief generation, then dispatch
+- [ ] **5.2** Severity classification prompt: provide case count, state count, hospitalization data; Bedrock classifies as LOW/MODERATE/HIGH/CRITICAL using explicit thresholds in prompt
+- [ ] **5.3** Brief generation prompt: foodborne-specific (food safety guidance, symptom awareness, reporting instructions, update history for re-alerts)
 
 ### Task Group 6: Dispatch Plugin
 
 - [ ] **6.1** Create `lambdas/delivery/alert_dispatcher/outbreak_dispatch.py` with `register()` — handles `alert_type: "cdc_outbreak"`
-- [ ] **6.2** Delivery routing: find subscribers in affected states/counties, send via email/SMS
+- [ ] **6.2** Delivery routing: per-state subscription lookup — find all subscribing counties in affected states, send via email/SMS
+- [ ] **6.3** No new GSI needed — reuses existing state-based county lookup from subscriptions table
 
 ### Task Group 7: CDK Stack
 
@@ -164,11 +172,12 @@ tests/unit/test_outbreak_dispatch.py
 
 ### Task Group 9: Unit Tests
 
-- [ ] **9.1** Test RSS parser — mock RSS XML, verify outbreak items extracted
-- [ ] **9.2** Test HTML scraper — mock investigation page, verify states/counts extracted
-- [ ] **9.3** Test change detection — new vs. known outbreaks
-- [ ] **9.4** Test outbreak processor — state-to-county mapping, SFN invocation
-- [ ] **9.5** Test dispatch plugin — subscriber lookup, delivery
+- [ ] **9.1** Test RSS parser — mock RSS XML, verify outbreak items extracted correctly
+- [ ] **9.2** Test Bedrock extraction — mock Bedrock response, verify structured data parsed
+- [ ] **9.3** Test change detection — new vs. known outbreaks, updated outbreak detection
+- [ ] **9.4** Test state name normalization — "North Carolina" → "north carolina", edge cases
+- [ ] **9.5** Test outbreak processor — state-to-county mapping, re-alert with new states highlighted
+- [ ] **9.6** Test dispatch plugin — per-state subscriber lookup, delivery
 
 ### Task Group 10: Integration Test
 
@@ -179,32 +188,60 @@ tests/unit/test_outbreak_dispatch.py
 
 ## 5. Key Differences from Drug Shortage Module
 
-| Aspect | Drug Shortage | CDC Outbreak Alerts |
-|--------|--------------|---------------------|
-| Data source | openFDA API (JSON, paginated) | CDC RSS feed (XML) + HTML scraping |
-| Detection model | Change detection (NEW/WORSENING/RESOLVED) | New item detection (RSS pubDate) |
-| Geographic model | Therapeutic category → disease → counties | Affected states listed by CDC → counties in those states |
-| Prediction | None (reactive) | None (reactive) |
-| Leader detection | Skipped (own S3 trigger) | Skipped entirely |
-| Core pipeline interaction | Subscribes to EventBridge for combined signals | No interaction with core disease pipeline |
-| Alert frequency | Weekly (openFDA polling) | Daily (RSS polling) |
-| Alert type | "shortage" / "combined" | "cdc_outbreak" |
+| Aspect                    | Drug Shortage                                  | CDC Outbreak Alerts                                      |
+| ------------------------- | ---------------------------------------------- | -------------------------------------------------------- |
+| Data source               | openFDA API (JSON, paginated)                  | CDC RSS feed (XML) + HTML scraping                       |
+| Detection model           | Change detection (NEW/WORSENING/RESOLVED)      | New item detection (RSS pubDate)                         |
+| Geographic model          | Therapeutic category → disease → counties      | Affected states listed by CDC → counties in those states |
+| Prediction                | None (reactive)                                | None (reactive)                                          |
+| Leader detection          | Skipped (own S3 trigger)                       | Skipped entirely                                         |
+| Core pipeline interaction | Subscribes to EventBridge for combined signals | No interaction with core disease pipeline                |
+| Alert frequency           | Weekly (openFDA polling)                       | Daily (RSS polling)                                      |
+| Alert type                | "shortage" / "combined"                        | "cdc_outbreak"                                           |
 
 ---
 
-## 6. Open Questions for Implementation
+## 6. Design Decisions (Resolved)
 
-1. **HTML scraping fragility** — CDC outbreak pages have no stable API. HTML structure can change. Should we build a resilient parser with fallbacks, or accept occasional failures and alert on parse errors?
+**1. Content extraction from CDC pages — Use Bedrock for parsing**
 
-2. **State name normalization** — CDC uses full state names ("Michigan", "Ohio"). Our config uses state keys ("michigan", "ohio"). Need a mapping utility.
+Instead of fragile regex/HTML scraping, invoke Bedrock to read the CDC outbreak page content and extract structured data (affected states, case counts, disease name, source food, onset date). This approach:
 
-3. **Deduplication** — if an outbreak is updated (e.g., new states added), should we re-alert all states or only the newly added ones?
+- Handles page layout changes gracefully (Bedrock understands context, not DOM structure)
+- Extracts nuanced info (e.g., "more than 400 people" → case_count: 400+)
+- Falls back cleanly if content is ambiguous (Bedrock says "unknown" rather than crashing)
 
-4. **Severity classification** — CDC doesn't provide a machine-readable severity level. Should Bedrock classify it, or should we infer from case count thresholds?
+The fetcher Lambda will fetch the raw HTML text content of the linked CDC page and pass it to Bedrock with a structured extraction prompt.
 
-5. **Subscription model** — should users subscribe per-state (as today for diseases) or per-outbreak-type (e.g., "alert me about all Salmonella outbreaks regardless of state")?
+**2. State name normalization — Simple lowercase mapping**
+
+CDC uses "Michigan", our config uses "michigan". The mapping is straightforward: `state_name.lower()`. For multi-word states like "North Carolina" → "north carolina". Build a hardcoded 50-state + DC + territories lookup table that maps various forms to our state keys. This is a one-time utility, not dynamic.
+
+**3. Deduplication — Re-alert ALL states, highlight NEW additions**
+
+When an outbreak is updated with new states:
+
+- Re-alert ALL currently affected states (not just new ones)
+- The generated brief clearly marks which states are newly added vs. previously reported
+- Health officials can track outbreak magnitude and geographic spread over time
+- DynamoDB state tracks `affected_states` history per outbreak to enable diff
+
+**4. Severity classification — Bedrock classifies from context**
+
+Use Bedrock to classify severity from the outbreak data (case count, hospitalization rate, spread speed, number of states affected). Bedrock has sufficient knowledge of public health severity frameworks. The prompt will include explicit classification criteria:
+
+- LOW: <50 cases, 1-2 states, no hospitalizations reported
+- MODERATE: 50-500 cases, 2-5 states, some hospitalizations
+- HIGH: 500-1000 cases, 5+ states, significant hospitalizations
+- CRITICAL: >1000 cases, 10+ states, deaths reported or rapid spread
+
+This gives Bedrock grounding rules to prevent hallucination while allowing contextual judgment.
+
+**5. Subscription model — Per-state (existing model)**
+
+Users subscribe per-state, same as the disease module. "Alert me about outbreaks affecting Texas" = any CDC outbreak that mentions Texas triggers an alert to all subscribing counties in Texas. No per-outbreak-type filtering needed. This reuses the existing subscription table and state-based county lookup — no new GSI required.
 
 ---
 
-*Estimated effort: 2-3 days*
-*Zero core module changes required (verified against ADDING_MODULES.md checklist)*
+_Estimated effort: 2-3 days_
+_Zero core module changes required (verified against ADDING_MODULES.md checklist)_
