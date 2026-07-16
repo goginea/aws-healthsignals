@@ -103,10 +103,18 @@ aws logs delete-log-group --log-group-name /aws/states/healthsignals-shortage-al
 Or delete all at once:
 
 ```bash
+# Lowercase prefix (Lambdas with explicit function_name)
 aws logs describe-log-groups --log-group-name-prefix /aws/lambda/healthsignals \
   --query 'logGroups[].logGroupName' --output text | \
   xargs -I{} aws logs delete-log-group --log-group-name {}
+
+# PascalCase prefix (CDK auto-generated Lambda names from stack name)
+aws logs describe-log-groups --log-group-name-prefix /aws/lambda/HealthSignals \
+  --query 'logGroups[].logGroupName' --output text | \
+  xargs -I{} aws logs delete-log-group --log-group-name {}
 ```
+
+> **Why two prefixes?** Lambdas with an explicit `function_name` in CDK (e.g., `healthsignals-alert-dispatcher`) get lowercase log groups. Lambdas without an explicit name (subscription functions, CDK internal handlers) get names auto-generated from the stack name prefix (`HealthSignals-*`).
 
 ### 6. Manually Added IAM Policies (if any)
 
