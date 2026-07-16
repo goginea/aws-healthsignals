@@ -127,7 +127,20 @@ aws iam delete-role-policy --role-name <ROLE_NAME> --policy-name BedrockInferenc
 aws iam delete-role-policy --role-name <ROLE_NAME> --policy-name LambdaInvokeDispatcher 2>/dev/null
 ```
 
-### 7. SES Verified Email Identity (optional)
+### 7. Orphaned API Gateway CloudWatch Roles
+
+CDK creates IAM roles for API Gateway CloudWatch logging but doesn't always delete them on stack destroy. Check and remove:
+
+```bash
+aws iam list-roles --query "Roles[?starts_with(RoleName,'HealthSignals') && contains(RoleName,'CloudWatch')].RoleName" --output text | tr '\t' '\n' | while read ROLE; do
+  echo "Deleting orphaned role: $ROLE"
+  aws iam detach-role-policy --role-name "$ROLE" \
+    --policy-arn "arn:aws:iam::aws:policy/service-role/AmazonAPIGatewayPushToCloudWatchLogs" 2>/dev/null
+  aws iam delete-role --role-name "$ROLE" 2>/dev/null
+done
+```
+
+### 8. SES Verified Email Identity (optional)
 
 If you verified an email address for alert delivery:
 
