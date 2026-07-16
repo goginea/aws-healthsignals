@@ -1,0 +1,130 @@
+{
+  "Comment": "CDC Outbreak Alerts — Alert Generation Workflow. Classifies severity from outbreak data, generates a foodborne outbreak situation brief via Bedrock, then dispatches to subscribers.",
+  "StartAt": "SeverityClassification",
+  "States": {
+    "SeverityClassification": {
+      "Type": "Task",
+      "Comment": "Classify outbreak severity using explicit grounding rules. Bedrock uses case count, state count, hospitalizations, and deaths to assign LOW/MODERATE/HIGH/CRITICAL.",
+      "Resource": "arn:aws:states:::bedrock:invokeModel",
+      "Parameters": {
+        "ModelId": "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+        "ContentType": "application/json",
+        "Accept": "application/json",
+        "Body": {
+          "anthropic_version": "bedrock-2023-05-31",
+          "max_tokens": 300,
+          "system": "You are a public health severity classification engine for foodborne outbreak alerts. Classify the outbreak into exactly one category based on the data provided.\n\nClassification criteria:\n- LOW: fewer than 50 confirmed cases, 1-2 states affected, no hospitalizations reported\n- MODERATE: 50-500 confirmed cases, 2-5 states affected, some hospitalizations\n- HIGH: 500-1000 confirmed cases, 5+ states affected, significant hospitalizations\n- CRITICAL: more than 1000 confirmed cases, 10+ states affected, deaths reported or rapid geographic spread\n\nRespond with ONLY a JSON object: {\"severity\": \"LOW|MODERATE|HIGH|CRITICAL\", \"reasoning\": \"one sentence explanation\"}",
+          "messages": [
+            {
+              "role": "user",
+              "content.$": "States.Format('Classify severity for this CDC outbreak. Disease: {}. Affected states: {}. Case count: {}. Hospitalizations: {}. Deaths: {}. Source food: {}. Status: {}.', $.disease_name, States.JsonToString($.affected_states), $.case_count, $.hospitalizations, $.deaths, $.source_food, $.status)"
+            }
+          ],
+          "thinking": {
+            "type": "disabled"
+          }
+        }
+      },
+      "ResultPath": "$.severity_result",
+      "Retry": [
+        {
+          "ErrorEquals": ["Bedrock.ThrottlingException"],
+          "IntervalSeconds": 5,
+          "MaxAttempts": 3,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
+          "Next": "OutbreakGenerationFailed"
+        }
+      ],
+      "Next": "GenerateOutbreakBrief"
+    },
+
+    "GenerateOutbreakBrief": {
+      "Type": "Task",
+      "Comment": "Generate a foodborne outbreak situation brief for health officers using Claude Sonnet 4.5.",
+      "Resource": "arn:aws:states:::bedrock:invokeModel",
+      "Parameters": {
+        "ModelId": "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+        "ContentType": "application/json",
+        "Accept": "application/json",
+        "Body": {
+          "anthropic_version": "bedrock-2023-05-31",
+          "max_tokens": 2000,
+          "system": "You are a public health communication specialist generating outbreak situation briefs for county health departments and healthcare facilities. Your briefs help health officers inform their communities and coordinate local response.\n\nGenerate a concise outbreak situation brief (400-600 words) with the following sections:\n1. OUTBREAK SUMMARY — Disease name, scale (cases, states), suspected source, and current status\n2. GEOGRAPHIC IMPACT — Which states are affected. If this is an update, clearly note which states are NEWLY ADDED since the last alert.\n3. WHAT TO WATCH FOR — Symptoms, incubation period, at-risk populations\n4. FOOD SAFETY ACTIONS — What residents should do (avoid specific foods if known, proper washing, cooking temps)\n5. FOR HEALTHCARE PROVIDERS — What to report, testing recommendations, treatment notes\n6. RESOURCES — CDC investigation link for latest updates\n\nMandatory Constraints:\n- Do NOT provide specific medical treatment recommendations\n- Do NOT diagnose patients\n- Frame all guidance as AWARENESS and PREVENTION, not clinical treatment\n- Use clear, non-alarmist language appropriate for county health officers\n- Always include: 'Source: CDC. Monitor cdc.gov/outbreaks for the latest updates.'\n- If this is an UPDATE alert, begin with 'UPDATE:' and note what has changed\n\nFollow CDC CERC communication principles: Be first, be right, be credible, express empathy, promote action, show respect.",
+          "messages": [
+            {
+              "role": "user",
+              "content.$": "States.Format('Generate a foodborne outbreak situation brief. Disease: {}. Affected states: {}. Newly added states (if update): {}. Is update: {}. Case count: {}. Hospitalizations: {}. Deaths: {}. Source food: {}. Onset date: {}. CDC link: {}. Summary from CDC: {}. Severity classification: {}.', $.disease_name, States.JsonToString($.affected_states), States.JsonToString($.new_states), $.is_update, $.case_count, $.hospitalizations, $.deaths, $.source_food, $.onset_date, $.cdc_link, $.summary, $.severity_result.Body.content[0].text)"
+            }
+          ],
+          "thinking": {
+            "type": "disabled"
+          }
+        }
+      },
+      "ResultPath": "$.brief_result",
+      "Retry": [
+        {
+          "ErrorEquals": ["Bedrock.ThrottlingException"],
+          "IntervalSeconds": 5,
+          "MaxAttempts": 3,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
+          "Next": "OutbreakGenerationFailed"
+        }
+      ],
+      "Next": "DispatchOutbreakAlert"
+    },
+
+    "DispatchOutbreakAlert": {
+      "Type": "Task",
+      "Comment": "Invoke the alert dispatcher Lambda to deliver the outbreak alert to subscribers.",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "healthsignals-alert-dispatcher",
+        "Payload.$": "$"
+      },
+      "ResultPath": "$.delivery_result",
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "Lambda.ServiceException",
+            "Lambda.TooManyRequestsException"
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
+          "Next": "OutbreakGenerationFailed"
+        }
+      ],
+      "Next": "OutbreakAlertSucceeded"
+    },
+
+    "OutbreakAlertSucceeded": {
+      "Type": "Succeed",
+      "Comment": "Outbreak alert generated and dispatched successfully"
+    },
+
+    "OutbreakGenerationFailed": {
+      "Type": "Fail",
+      "Cause": "Outbreak alert generation pipeline failed",
+      "Error": "OutbreakGenerationError"
+    }
+  }
+}

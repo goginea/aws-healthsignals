@@ -1,0 +1,40 @@
+{
+  "source_name": "cdc_outbreaks_rss",
+  "display_name": "CDC Outbreaks RSS Feed",
+  "description": "Real-time outbreak notifications from CDC including foodborne, parasitic, and bacterial outbreaks",
+  "enabled": true,
+  "priority": "primary",
+
+  "api": {
+    "base_url": "https://tools.cdc.gov/api/v2/resources/media/285676.rss",
+    "auth_type": "none",
+    "rate_limit_per_hour": null,
+    "timeout_seconds": 30,
+    "retry_max_attempts": 3,
+    "retry_backoff_seconds": 10
+  },
+
+  "poll_frequency": {
+    "schedule": "daily",
+    "cron": "0 8 * * ? *",
+    "description": "Daily at 8 AM UTC"
+  },
+
+  "extraction": {
+    "method": "bedrock",
+    "model_id": "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+    "description": "Use Bedrock to extract structured data from linked CDC outbreak investigation pages"
+  },
+
+  "s3_storage": {
+    "prefix_pattern": "raw/cdc-outbreaks/{date}/{outbreak_id}.json"
+  },
+
+  "notes": {
+    "sla": "None — public CDC feed, no uptime guarantee",
+    "update_frequency": "Near-real-time (CDC posts as outbreaks are announced or updated)",
+    "coverage": "All CDC-tracked multistate outbreaks (Salmonella, E. coli, Listeria, Cyclospora, Botulism, etc.)",
+    "risk": "RSS feed structure is stable (standard RSS 2.0). Linked HTML pages may change layout.",
+    "validated": "2026-07-15"
+  }
+}

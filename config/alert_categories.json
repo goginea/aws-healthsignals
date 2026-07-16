@@ -21,6 +21,41 @@
       "module": "drug_shortage",
       "relevant_diseases": ["rsv", "covid"],
       "priority_level": "HIGH"
+    },
+    {
+      "category_key": "foodborne_outbreak",
+      "display_name": "Foodborne Outbreaks (All)",
+      "module": "cdc_outbreak_alerts",
+      "relevant_diseases": [],
+      "priority_level": "HIGH"
+    },
+    {
+      "category_key": "salmonella",
+      "display_name": "Salmonella Outbreaks",
+      "module": "cdc_outbreak_alerts",
+      "relevant_diseases": [],
+      "priority_level": "HIGH"
+    },
+    {
+      "category_key": "ecoli",
+      "display_name": "E. coli Outbreaks",
+      "module": "cdc_outbreak_alerts",
+      "relevant_diseases": [],
+      "priority_level": "HIGH"
+    },
+    {
+      "category_key": "listeria",
+      "display_name": "Listeria Outbreaks",
+      "module": "cdc_outbreak_alerts",
+      "relevant_diseases": [],
+      "priority_level": "HIGH"
+    },
+    {
+      "category_key": "cyclospora",
+      "display_name": "Cyclospora Outbreaks",
+      "module": "cdc_outbreak_alerts",
+      "relevant_diseases": [],
+      "priority_level": "HIGH"
     }
   ]
 }
