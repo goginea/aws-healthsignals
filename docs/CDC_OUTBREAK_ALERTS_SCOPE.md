@@ -213,9 +213,15 @@ Instead of fragile regex/HTML scraping, invoke Bedrock to read the CDC outbreak 
 
 The fetcher Lambda will fetch the raw HTML text content of the linked CDC page and pass it to Bedrock with a structured extraction prompt.
 
-**2. State name normalization — Simple lowercase mapping**
+**2. State name normalization — Lookup table with multiple input forms**
 
-CDC uses "Michigan", our config uses "michigan". The mapping is straightforward: `state_name.lower()`. For multi-word states like "North Carolina" → "north carolina". Build a hardcoded 50-state + DC + territories lookup table that maps various forms to our state keys. This is a one-time utility, not dynamic.
+CDC pages consistently use full official state names ("North Carolina", "West Virginia"). However, Bedrock extraction may encounter abbreviations in tables or shorthand. The normalization utility will handle:
+
+- Full name: "North Carolina" → "north carolina"
+- 2-letter postal code: "NC" → "north carolina"
+- Common abbreviations: "N. Carolina", "N Carolina" → "north carolina"
+
+Implementation: a hardcoded lookup dict mapping all known forms (full name, postal abbreviation, common shortened forms) to our state keys. Input is lowercased and stripped before lookup. If no match found, log a warning and skip (don't crash).
 
 **3. Deduplication — Re-alert ALL states, highlight NEW additions**
 
