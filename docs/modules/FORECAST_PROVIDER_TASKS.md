@@ -99,10 +99,12 @@ This is the one core modification required. Gated by env var — zero impact whe
 
 - [ ] **7.1** Modify `lambdas/prediction/timing_estimation/handler.py`
   - Add optional env var: `FORECAST_STATE_TABLE` (empty when plugin not deployed)
-  - If env var is set: query DynamoDB for latest aggregated forecast matching state + disease + current week
-  - Append `external_forecast` dict to the Lambda output (or `null` if no data / env var unset)
-  - If query fails: log warning, set `external_forecast: null`, continue without error
+  - Read `state_key` from input event (passed by coordinator — see 7.2)
+  - If env var is set and state_key is present: query DynamoDB for latest aggregated forecast matching state + disease + current week
+  - Add `external_forecast` dict to the top-level Lambda return (alongside existing `estimates`, `disease`, `week` fields)
+  - If no data, env var unset, or query fails: set `external_forecast: null`, log warning, continue without error
 - [ ] **7.2** Modify `lambdas/orchestration/pipeline_coordinator/handler.py`
+  - Add `"state_key": state_key` to the timing_payload dict (timing_estimation needs it to query forecast table by state)
   - Add one line to forward `external_forecast` from timing_result to the county_alert dict:
     `"external_forecast": timing_result.get("external_forecast")`
   - This passes the field through to the Step Functions input where the SFN prompt can reference it
@@ -215,8 +217,8 @@ This is the one core modification required. Gated by env var — zero impact whe
 
 This plugin requires modifying two core files:
 
-1. **`timing_estimation/handler.py`** — optionally reads from forecast-state DynamoDB table (gated by `FORECAST_STATE_TABLE` env var; when empty, behaves identically to today; if query fails, logs warning and continues)
-2. **`pipeline_coordinator/handler.py`** — one line addition to forward `external_forecast` from timing_result to the county_alert dict passed to Step Functions
+1. **`timing_estimation/handler.py`** — optionally reads from forecast-state DynamoDB table (gated by `FORECAST_STATE_TABLE` env var; when empty, behaves identically to today; if query fails, logs warning and continues). Reads `state_key` from input event for the DynamoDB query.
+2. **`pipeline_coordinator/handler.py`** — two additions: (a) pass `state_key` in the timing_payload so timing_estimation can query by state, (b) forward `external_forecast` from timing_result to the county_alert dict passed to Step Functions
 
 CDK wiring:
 
