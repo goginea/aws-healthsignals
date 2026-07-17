@@ -1,0 +1,23 @@
+{
+  "provider_name": "cdc_rsv_hub",
+  "display_name": "US RSV Forecast Hub Ensemble",
+  "description": "Weekly RSV hospitalization forecasts from US RSV Forecast Hub (ensemble of multiple models)",
+  "enabled": true,
+  "source_type": "github_csv",
+  "github_repo": "HopkinsIDD/rsv-forecast-hub",
+  "github_path_pattern": "model-output/RSV-ensemble/{date}-RSV-ensemble.csv",
+  "auth_type": "none",
+  "diseases": ["rsv"],
+  "poll_schedule": "weekly",
+  "trust_weight": 1.0,
+  "timeout_seconds": 30,
+  "fallback_on_error": true,
+  "notes": {
+    "data_license": "MIT",
+    "ensemble_method": "linear_pool",
+    "geo_resolution": "state + national",
+    "target": "hospitalizations",
+    "horizons": [1, 2, 3, 4],
+    "update_day": "Wednesday"
+  }
+}

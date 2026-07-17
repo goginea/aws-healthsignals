@@ -1,0 +1,98 @@
+{
+  "title": "Forecast Provider Configuration",
+  "description": "Schema for forecast provider config files in config/forecast_providers/. Each provider (built-in or custom) must conform to this structure.",
+  "type": "object",
+  "required_fields": [
+    "provider_name",
+    "display_name",
+    "enabled",
+    "source_type",
+    "auth_type",
+    "diseases",
+    "poll_schedule",
+    "trust_weight",
+    "timeout_seconds",
+    "fallback_on_error"
+  ],
+  "field_definitions": {
+    "provider_name": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$",
+      "description": "Unique identifier for the provider"
+    },
+    "display_name": {
+      "type": "string",
+      "description": "Human-readable name for alerts and dashboards"
+    },
+    "enabled": {
+      "type": "boolean",
+      "description": "Whether this provider is active"
+    },
+    "source_type": {
+      "type": "string",
+      "valid_values": ["github_csv", "api_endpoint"],
+      "description": "How to fetch forecasts: from GitHub CSV files or an HTTP API"
+    },
+    "github_repo": {
+      "type": "string",
+      "required_when": "source_type == github_csv",
+      "description": "GitHub org/repo (e.g., cdcepi/FluSight-forecast-hub)"
+    },
+    "github_path_pattern": {
+      "type": "string",
+      "required_when": "source_type == github_csv",
+      "description": "Path pattern within repo to find forecast CSVs. Use {date} placeholder."
+    },
+    "endpoint_url": {
+      "type": "string (URL)",
+      "required_when": "source_type == api_endpoint",
+      "description": "URL to POST forecast requests to"
+    },
+    "auth_type": {
+      "type": "string",
+      "valid_values": ["none", "api_key", "bearer", "iam_sigv4"],
+      "description": "Authentication method"
+    },
+    "auth_secret_arn": {
+      "type": "string (ARN)",
+      "required_when": "auth_type != none",
+      "description": "Secrets Manager ARN for credentials"
+    },
+    "diseases": {
+      "type": "array of strings",
+      "description": "Which diseases this provider covers (e.g., [\"influenza\", \"rsv\"])"
+    },
+    "poll_schedule": {
+      "type": "string",
+      "valid_values": ["weekly", "daily"],
+      "description": "How often to fetch forecasts"
+    },
+    "trust_weight": {
+      "type": "number (0.0-1.0)",
+      "description": "Weight for aggregation. 1.0 = full trust, 0.0 = ignored."
+    },
+    "timeout_seconds": {
+      "type": "integer (5-120)",
+      "description": "HTTP request timeout for fetching"
+    },
+    "fallback_on_error": {
+      "type": "boolean",
+      "description": "If true: skip on error. If false: raise alarm."
+    }
+  },
+  "standard_forecast_contract": {
+    "description": "All providers must output this format (response from API or parsed from CSV)",
+    "fields": {
+      "provider": "string — provider_name for attribution",
+      "disease": "string — must match request",
+      "geo_level": "string — 'state' or 'national'",
+      "geo_value": "string — state abbreviation or 'US' (normalized to internal key before storage)",
+      "forecast_date": "ISO date string — when forecast was generated",
+      "target": "string — 'hospitalizations', 'ed_visits', or 'cases'",
+      "predictions": "array of horizon objects",
+      "predictions[].horizon_weeks": "integer — weeks ahead (1-4)",
+      "predictions[].point_estimate": "number — central value",
+      "predictions[].quantiles": "object (optional) — keys: '0.025','0.25','0.75','0.975'"
+    }
+  }
+}

@@ -20,6 +20,7 @@
     "project_name": "healthsignals",
     "alert_sender_email": "alerts@healthsignals.example.com",
     "enable_drug_shortage": true,
-    "enable_cdc_outbreak_alerts": true
+    "enable_cdc_outbreak_alerts": true,
+    "enable_forecast_providers": true
   }
 }

@@ -123,12 +123,23 @@ def lambda_handler(event: dict, context: Any) -> dict:
     # Sort by urgency (shortest lag first)
     estimates.sort(key=lambda x: x["timing"]["lag_weeks_median"])
 
+    # --- External Forecast Enrichment (optional, from Forecast Provider plugin) ---
+    external_forecast = None
+    forecast_state_table_name = os.environ.get("FORECAST_STATE_TABLE", "")
+    state_key = event.get("state_key", "")
+
+    if forecast_state_table_name and state_key and disease_key:
+        external_forecast = _query_external_forecast(
+            forecast_state_table_name, state_key, disease_key, week
+        )
+
     return {
         "disease": disease_key,
         "leader_msa": leader_msa,
         "week": week,
         "estimates": estimates,
         "total_counties": len(estimates),
+        "external_forecast": external_forecast,
     }
 
 
@@ -195,3 +206,54 @@ def calculate_confidence(calibration: list, degrades_after: int) -> float:
     # Degrade if most recent calibration is old
     # (future: check dates of calibration entries)
     return round(base_confidence, 2)
+
+
+def _query_external_forecast(
+    table_name: str, state_key: str, disease_key: str, week: str
+) -> dict | None:
+    """Query external forecast from the forecast-state DynamoDB table.
+
+    Looks for the aggregated forecast record (provider='_aggregated') for the
+    given state + disease + week. Returns the forecast dict or None.
+
+    This function is only called when FORECAST_STATE_TABLE env var is set
+    (i.e., when the Forecast Provider plugin is deployed).
+    """
+    try:
+        # Convert epiweek (YYYYWW) to ISO week (YYYY-WNN) if needed
+        if len(week) == 6 and "W" not in week:
+            iso_week = f"{week[:4]}-W{week[4:]}"
+        else:
+            iso_week = week
+
+        forecast_table = dynamodb.Table(table_name)
+        disease_week_key = f"{disease_key}_{iso_week}"
+
+        response = forecast_table.get_item(
+            Key={
+                "geo_key": state_key,
+                "disease_week": disease_week_key,
+            }
+        )
+
+        item = response.get("Item")
+        if not item:
+            logger.info(f"No external forecast found for {state_key}/{disease_week_key}")
+            return None
+
+        # Return relevant forecast data for Bedrock prompt enrichment
+        predictions = item.get("predictions", [])
+        return {
+            "provider": item.get("provider", "external"),
+            "providers": item.get("providers", []),
+            "provider_count": item.get("provider_count", 1),
+            "predictions": predictions,
+            "target": item.get("target", "hospitalizations"),
+            "conflict": item.get("conflict", False),
+            "agreement_status": item.get("agreement_status", "unknown"),
+            "forecast_date": item.get("forecast_date", ""),
+        }
+
+    except Exception as e:
+        logger.warning(f"External forecast query failed for {state_key}/{disease_key}: {e}")
+        return None

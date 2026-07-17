@@ -40,9 +40,16 @@ enable_drug_shortage = bool(_shortage_ctx) if _shortage_ctx is not None else Tru
 _outbreak_ctx = app.node.try_get_context("enable_cdc_outbreak_alerts")
 enable_cdc_outbreak_alerts = bool(_outbreak_ctx) if _outbreak_ctx is not None else True
 
+_forecast_ctx = app.node.try_get_context("enable_forecast_providers")
+enable_forecast_providers = bool(_forecast_ctx) if _forecast_ctx is not None else True
+
 # Stack deployment order matters — dependencies flow top to bottom
 ingestion = IngestionStack(app, "HealthSignals-Ingestion", env=env)
-prediction = PredictionStack(app, "HealthSignals-Prediction", env=env)
+prediction = PredictionStack(
+    app, "HealthSignals-Prediction",
+    forecast_state_table="healthsignals-forecast-state" if enable_forecast_providers else "",
+    env=env,
+)
 generation = GenerationStack(app, "HealthSignals-Generation", env=env)
 
 # Orchestration uses bucket name string (not construct) to avoid circular dependency
@@ -139,5 +146,20 @@ if enable_cdc_outbreak_alerts:
     )
     cdc_outbreaks.add_dependency(ingestion)   # Needs S3 bucket
     cdc_outbreaks.add_dependency(monitoring)  # Needs ops topic
+
+# --- Optional Plugin: Forecast Providers ---
+if enable_forecast_providers:
+    from stacks.forecast_provider_stack import ForecastProviderStack
+
+    forecast_providers = ForecastProviderStack(
+        app,
+        "HealthSignals-ForecastProviders",
+        data_bucket_name=ingestion.data_bucket.bucket_name,
+        ops_topic_arn=monitoring.ops_topic.topic_arn,
+        env=env,
+    )
+    forecast_providers.add_dependency(ingestion)   # Needs S3 bucket
+    forecast_providers.add_dependency(prediction)  # Table must exist before fetchers write
+    forecast_providers.add_dependency(monitoring)  # Needs ops topic
 
 app.synth()

@@ -18,7 +18,7 @@ from constructs import Construct
 
 
 class PredictionStack(Stack):
-    def __init__(self, scope: Construct, construct_id: str, **kwargs) -> None:
+    def __init__(self, scope: Construct, construct_id: str, forecast_state_table: str = "", **kwargs) -> None:
         super().__init__(scope, construct_id, **kwargs)
 
         # --- Shared Lambda Layer ---
@@ -130,10 +130,22 @@ class PredictionStack(Stack):
                 "COUNTY_CONFIG_TABLE": self.county_config_table.table_name,
                 "CONFIG_BUCKET": f"healthsignals-data-{self.account}-{self.region}",
                 "CONFIG_PREFIX": "config/",
+                **({"FORECAST_STATE_TABLE": forecast_state_table} if forecast_state_table else {}),
             },
         )
         self.calibration_table.grant_read_data(self.timing_estimation)
         self.county_config_table.grant_read_data(self.timing_estimation)
+
+        # Grant DynamoDB read on forecast-state table (when forecast provider plugin is enabled)
+        if forecast_state_table:
+            self.timing_estimation.add_to_role_policy(
+                iam.PolicyStatement(
+                    actions=["dynamodb:GetItem", "dynamodb:Query"],
+                    resources=[
+                        f"arn:aws:dynamodb:{self.region}:{self.account}:table/{forecast_state_table}",
+                    ],
+                )
+            )
 
         # Grant S3 read for config access
         self.leader_detection.add_to_role_policy(
