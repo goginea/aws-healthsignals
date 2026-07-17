@@ -139,7 +139,7 @@ This is the one core modification required. Gated by env var — zero impact whe
 
 ## Task Group 10: app.py Registration
 
-- [ ] **10.1** Add `enable_forecast_providers` feature flag to `cdk/cdk.json` (default: false — this plugin is opt-in since it modifies core behavior)
+- [ ] **10.1** Add `enable_forecast_providers` feature flag to `cdk/cdk.json` (default: true)
 - [ ] **10.2** Register in `cdk/app.py`
   - Read feature flag
   - Conditional import and instantiation of ForecastProviderStack
@@ -212,6 +212,7 @@ This is the one core modification required. Gated by env var — zero impact whe
 ### One Core Modification (Acknowledged)
 
 This plugin requires modifying the core `timing_estimation` Lambda to optionally read from the forecast-state DynamoDB table. This is:
+
 - **Gated by env var** — when `FORECAST_STATE_TABLE` is empty/unset, the Lambda behaves identically to today
 - **Failure-tolerant** — if the DynamoDB query fails, the Lambda logs a warning and continues with `external_forecast: null`
 - **Applied by the plugin stack** — the ForecastProviderStack adds the env var and IAM policy to the existing Lambda (the core CDK code doesn't change)
@@ -222,24 +223,24 @@ FluSight CSVs use "TX", RSV Hub uses "Texas" or "TX". All ingestion Lambdas norm
 
 ### EventBridge Usage
 
-The plugin emits `healthsignals.forecast.updated` events. These are informational — the core does NOT subscribe to them. Instead, the core's timing_estimation Lambda reads forecast data from DynamoDB (pull model). The events are available for future consumers (dashboards, external integrations).
+The plugin emits `healthsignals.forecast.updated` events after aggregation completes. This follows the same pattern as the core pipeline emitting `healthsignals.disease.threshold_crossed` — a "data available" signal for downstream consumers. The core's timing_estimation Lambda reads forecast data from DynamoDB directly (same as how the shortage enrichment Lambda reads the shortage-state table).
 
 ### Trust Weights
 
-| Provider | Default Weight | Notes |
-|----------|---------------|-------|
-| CDC FluSight Ensemble | 1.0 | State-level magnitude/trajectory only |
-| CDC RSV Hub | 1.0 | Same as FluSight |
+| Provider                      | Default Weight                                 | Notes                                       |
+| ----------------------------- | ---------------------------------------------- | ------------------------------------------- |
+| CDC FluSight Ensemble         | 1.0                                            | State-level magnitude/trajectory only       |
+| CDC RSV Hub                   | 1.0                                            | Same as FluSight                            |
 | Internal historic calibration | 1.0 for county timing, 0.6 for state magnitude | County timing offset is unique contribution |
-| User custom model | 0.7 (configurable) | Per-provider in config |
+| User custom model             | 0.7 (configurable)                             | Per-provider in config                      |
 
 Note: Internal calibration weight of 0.6 applies only to state-level magnitude comparison. For county-specific timing (lag weeks, severity multiplier), internal calibration remains the sole source at weight 1.0, since no external hub provides county-level data.
 
 ### Feature Flag Default
 
-Default: `false` — Unlike other plugins, this one modifies core Lambda behavior (adds DynamoDB read). It should be explicitly opted into rather than enabled by default.
+Default: `true` — Same as other plugins. The core modification is gated by the `FORECAST_STATE_TABLE` env var (set by the plugin stack). When the env var is absent, timing_estimation behaves identically to the no-plugin state.
 
 ---
 
-*Total: 14 task groups, ~35 tasks*
-*Estimated: 4-5 days for implementation + testing*
+_Total: 14 task groups, ~35 tasks_
+_Estimated: 4-5 days for implementation + testing_
