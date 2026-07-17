@@ -105,9 +105,8 @@ This is the one core modification required. Gated by env var — zero impact whe
   - If no data, env var unset, or query fails: set `external_forecast: null`, log warning, continue without error
 - [ ] **7.2** Modify `lambdas/orchestration/pipeline_coordinator/handler.py`
   - Add `"state_key": state_key` to the timing_payload dict (timing_estimation needs it to query forecast table by state)
-  - Add one line to forward `external_forecast` from timing_result to the county_alert dict:
-    `"external_forecast": timing_result.get("external_forecast")`
-  - This passes the field through to the Step Functions input where the SFN prompt can reference it
+  - Add `"external_forecast": timing_result.get("external_forecast")` to the county_alert dict (after timing_result extraction)
+  - Add `"external_forecast": county_alert.get("external_forecast")` to the sfn_input dict in `start_alert_generation()` — this is what the SFN prompt will read as `$.external_forecast`
 - [ ] **7.3** Update `cdk/stacks/prediction_stack.py`
   - Add optional `forecast_state_table` parameter (default: empty string)
   - When non-empty: add `FORECAST_STATE_TABLE` env var to timing_estimation Lambda and grant DynamoDB read IAM
@@ -218,7 +217,7 @@ This is the one core modification required. Gated by env var — zero impact whe
 This plugin requires modifying two core files:
 
 1. **`timing_estimation/handler.py`** — optionally reads from forecast-state DynamoDB table (gated by `FORECAST_STATE_TABLE` env var; when empty, behaves identically to today; if query fails, logs warning and continues). Reads `state_key` from input event for the DynamoDB query.
-2. **`pipeline_coordinator/handler.py`** — two additions: (a) pass `state_key` in the timing_payload so timing_estimation can query by state, (b) forward `external_forecast` from timing_result to the county_alert dict passed to Step Functions
+2. **`pipeline_coordinator/handler.py`** — three additions: (a) pass `state_key` in the timing_payload, (b) extract `external_forecast` from timing_result into county_alert, (c) add `external_forecast` to the sfn_input dict in `start_alert_generation()` so the SFN can reference it as `$.external_forecast`
 
 CDK wiring:
 
