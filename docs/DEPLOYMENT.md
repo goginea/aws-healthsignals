@@ -40,6 +40,8 @@ Edit `cdk/cdk.json` to configure:
 
 - `enable_drug_shortage`: Set `false` for core-only (7 stacks), `true` to include Drug Shortage (8 stacks)
 - `alert_sender_email`: **Must be a verified SES identity** (email or domain). Alerts will not deliver without this. Verify it in Step 11.
+- `enable_cdc_outbreak_alerts`: Set `true` to include CDC Outbreak Alerts module
+- `enable_forecast_providers`: Set `true` to include Forecast Provider module (FluSight + RSV Hub + custom models)
 
 ### Step 4: Deploy All Stacks
 
@@ -60,6 +62,8 @@ cdk deploy --all --require-approval never
 **Optional plugin stacks:**
 
 8. `HealthSignals-DrugShortage` — openFDA fetcher, change detector, enrichment Lambda, own Step Functions, DynamoDB tables, alarms, dashboard
+9. `HealthSignals-CDCOutbreaks` — CDC RSS fetcher, outbreak processor, own Step Functions, DynamoDB table, alarms, dashboard
+10. `HealthSignals-ForecastProviders` — FluSight/RSV Hub fetchers, custom model fetcher, forecast aggregator, DynamoDB table, alarms, dashboard
 
 ### Step 5: Upload Config to S3
 
@@ -243,6 +247,29 @@ aws lambda invoke --function-name healthsignals-openfda-shortage-fetcher \
 ```
 
 The module begins operation on the next Monday 6 AM UTC EventBridge trigger.
+
+---
+
+## Deploying the Forecast Provider Module After Core
+
+```bash
+# 1. Set "enable_forecast_providers": true in cdk/cdk.json
+
+# 2. Deploy the new stack + updated prediction stack
+cdk deploy HealthSignals-ForecastProviders HealthSignals-Prediction
+
+# 3. Upload forecast provider configs
+BUCKET="healthsignals-data-${ACCOUNT_ID}-us-east-1"
+aws s3 sync config/forecast_providers/ s3://${BUCKET}/config/forecast_providers/
+
+# 4. Grant Bedrock IAM (not needed — this plugin has no Step Functions of its own)
+
+# 5. Verify the FluSight fetcher works
+aws lambda invoke --function-name healthsignals-flusight-forecast-fetcher \
+  --payload '{}' --cli-binary-format raw-in-base64-out /dev/stdout
+```
+
+The module begins fetching forecasts on the next Wednesday (10 AM UTC).
 
 ---
 

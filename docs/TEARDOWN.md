@@ -17,6 +17,14 @@ If the Drug Shortage module was enabled, this also removes:
 
 - `HealthSignals-DrugShortage` stack (DynamoDB tables, Lambdas, Step Functions, SQS, alarms, dashboard)
 
+If the CDC Outbreak Alerts module was enabled:
+
+- `HealthSignals-CDCOutbreaks` stack (DynamoDB table, Lambdas, Step Functions, alarms, dashboard)
+
+If the Forecast Provider module was enabled:
+
+- `HealthSignals-ForecastProviders` stack (DynamoDB table, 4 Lambdas, EventBridge schedules, alarms, dashboard)
+
 ---
 
 ## Resources NOT Deleted by CDK
@@ -67,6 +75,12 @@ aws dynamodb delete-table --table-name healthsignals-subscriptions
 # Drug Shortage module tables (if enabled)
 aws dynamodb delete-table --table-name healthsignals-drug-shortage-state 2>/dev/null
 aws dynamodb delete-table --table-name healthsignals-shortage-alerts 2>/dev/null
+
+# CDC Outbreak Alerts module table (if enabled)
+aws dynamodb delete-table --table-name healthsignals-cdc-outbreak-state 2>/dev/null
+
+# Forecast Provider module table (if enabled)
+aws dynamodb delete-table --table-name healthsignals-forecast-state 2>/dev/null
 ```
 
 ### 4. Bedrock Knowledge Bases (if created in console)
@@ -98,6 +112,17 @@ aws logs delete-log-group --log-group-name /aws/lambda/healthsignals-openfda-sho
 aws logs delete-log-group --log-group-name /aws/lambda/healthsignals-shortage-change-detector 2>/dev/null
 aws logs delete-log-group --log-group-name /aws/lambda/healthsignals-shortage-enrichment 2>/dev/null
 aws logs delete-log-group --log-group-name /aws/states/healthsignals-shortage-alert-generation 2>/dev/null
+
+# CDC Outbreak Alerts module (if enabled)
+aws logs delete-log-group --log-group-name /aws/lambda/healthsignals-cdc-outbreak-fetcher 2>/dev/null
+aws logs delete-log-group --log-group-name /aws/lambda/healthsignals-outbreak-processor 2>/dev/null
+aws logs delete-log-group --log-group-name /aws/states/healthsignals-outbreak-alert-generation 2>/dev/null
+
+# Forecast Provider module (if enabled)
+aws logs delete-log-group --log-group-name /aws/lambda/healthsignals-flusight-forecast-fetcher 2>/dev/null
+aws logs delete-log-group --log-group-name /aws/lambda/healthsignals-rsv-hub-forecast-fetcher 2>/dev/null
+aws logs delete-log-group --log-group-name /aws/lambda/healthsignals-custom-model-fetcher 2>/dev/null
+aws logs delete-log-group --log-group-name /aws/lambda/healthsignals-forecast-aggregator 2>/dev/null
 ```
 
 Or delete all at once:
