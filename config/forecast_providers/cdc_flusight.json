@@ -1,0 +1,25 @@
+{
+  "provider_name": "cdc_flusight",
+  "display_name": "CDC FluSight Ensemble Forecast",
+  "description": "Weekly influenza hospitalization forecasts from CDC FluSight Hub (ensemble of 30+ models)",
+  "enabled": true,
+  "source_type": "github_csv",
+  "github_repo": "cdcepi/FluSight-forecast-hub",
+  "github_path_pattern": "model-output/FluSight-ensemble/{date}-FluSight-ensemble.csv",
+  "auth_type": "none",
+  "diseases": ["influenza"],
+  "poll_schedule": "weekly",
+  "trust_weight": 1.0,
+  "timeout_seconds": 30,
+  "fallback_on_error": true,
+  "notes": {
+    "data_license": "MIT",
+    "model_count": "30+ contributing models",
+    "ensemble_method": "linear_pool",
+    "validated_seasons": "7+",
+    "geo_resolution": "state + national",
+    "target": "hospitalizations",
+    "horizons": [1, 2, 3, 4],
+    "update_day": "Wednesday"
+  }
+}

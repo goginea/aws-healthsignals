@@ -62,5 +62,12 @@
     "log_level": "INFO",
     "xray_enabled": true,
     "metrics_namespace": "HealthSignals"
+  },
+  "forecast_providers": {
+    "enabled": true,
+    "aggregation_method": "weighted_mean",
+    "conflict_threshold_pct": 50,
+    "forecast_state_table": "healthsignals-forecast-state",
+    "max_providers": 10
   }
 }

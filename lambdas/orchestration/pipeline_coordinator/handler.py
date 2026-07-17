@@ -369,6 +369,7 @@ def run_detection_pipeline(
             "county_fips": county["county_fips"],
             "county_name": county["county_name"],
             "affinity_weight": county.get("affinity_weight", 1.0),
+            "state_key": state_key,
         }
 
         timing_result = invoke_lambda_sync(TIMING_ESTIMATION_FUNCTION, timing_payload)
@@ -388,6 +389,7 @@ def run_detection_pipeline(
             "warning_window_weeks": timing_result.get("warning_window_weeks", 4),
             "cdc_activity_level": timing_result.get("cdc_activity_level", "unknown"),
             "execution_id": execution_id,
+            "external_forecast": timing_result.get("external_forecast"),
         }
         counties_with_timing.append(county_alert)
 
@@ -606,6 +608,7 @@ def start_alert_generation(county_alert: dict, execution_id: str) -> dict:
         "alert_contacts": county_alert.get("alert_contacts", []),
         "alert_type": county_alert.get("alert_type", "disease_outbreak"),
         "execution_id": execution_id,
+        "external_forecast": county_alert.get("external_forecast"),
     }
 
     response = sfn_client.start_execution(

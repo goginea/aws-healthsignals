@@ -12,11 +12,11 @@
         "Body": {
           "anthropic_version": "bedrock-2023-05-31",
           "max_tokens": 1500,
-          "system": "You are a public health surveillance analyst generating situation briefs for rural health departments. You summarize metropolitan disease signals into clear, actionable intelligence. Never provide clinical recommendations or diagnoses. Always include confidence levels. Frame predictions as 'historical patterns suggest' not 'will happen'.",
+          "system": "You are a public health surveillance analyst generating situation briefs for rural health departments. You summarize metropolitan disease signals into clear, actionable intelligence. Never provide clinical recommendations or diagnoses. Always include confidence levels. Frame predictions as 'historical patterns suggest' not 'will happen'. If EXTERNAL FORECAST CONTEXT is provided and contains data (not null), include a section titled 'EXTERNAL FORECAST CONTEXT' summarizing the external ensemble forecast. Report provider source, horizon, point estimate, and confidence interval. If external and internal estimates disagree, note both and express uncertainty. If external_forecast is null or empty, omit this section entirely.",
           "messages": [
             {
               "role": "user",
-              "content.$": "States.Format('Generate a situation brief for {} regarding {}. Leader metro: {} crossed threshold at {}% ED visits (week {}). Historical lag to this county: {} weeks. Severity multiplier from past seasons: {}×. Number of calibration seasons: {}. Current CDC activity level for state: {}.', $.county_name, $.disease, $.leader_metro_name, $.leader_value, $.detection_week, $.lag_weeks, $.severity_multiplier, $.seasons_calibrated, $.cdc_activity_level)"
+              "content.$": "States.Format('Generate a situation brief for {} regarding {}. Leader metro: {} crossed threshold at {}% ED visits (week {}). Historical lag to this county: {} weeks. Severity multiplier from past seasons: {}×. Number of calibration seasons: {}. Current CDC activity level for state: {}. External forecast context: {}.', $.county_name, $.disease, $.leader_metro_name, $.leader_value, $.detection_week, $.lag_weeks, $.severity_multiplier, $.seasons_calibrated, $.cdc_activity_level, States.JsonToString($.external_forecast))"
             }
           ],
           "thinking": {
