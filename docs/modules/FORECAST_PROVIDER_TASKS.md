@@ -102,8 +102,14 @@ This is the one core modification required. Gated by env var — zero impact whe
   - If env var is set: query DynamoDB for latest aggregated forecast matching state + disease + current week
   - Append `external_forecast` dict to the Lambda output (or `null` if no data / env var unset)
   - If query fails: log warning, set `external_forecast: null`, continue without error
-- [ ] **7.2** Update `cdk/stacks/prediction_stack.py` — do NOT add env var or IAM here (plugin stack does it)
-  - Note: The ForecastProviderStack will add FORECAST_STATE_TABLE env var and DynamoDB read IAM to the existing timing_estimation Lambda via cross-stack reference or direct IAM policy
+- [ ] **7.2** Modify `lambdas/orchestration/pipeline_coordinator/handler.py`
+  - Add one line to forward `external_forecast` from timing_result to the county_alert dict:
+    `"external_forecast": timing_result.get("external_forecast")`
+  - This passes the field through to the Step Functions input where the SFN prompt can reference it
+- [ ] **7.3** Update `cdk/stacks/prediction_stack.py`
+  - Add optional `forecast_state_table` parameter (default: empty string)
+  - When non-empty: add `FORECAST_STATE_TABLE` env var to timing_estimation Lambda and grant DynamoDB read IAM
+  - app.py passes the table name when forecast plugin is enabled (same pattern as delivery stack's plugin_env_vars)
 
 ---
 
@@ -124,16 +130,11 @@ This is the one core modification required. Gated by env var — zero impact whe
   - RSV Hub fetcher Lambda + EventBridge weekly schedule
   - Custom model fetcher Lambda (invoked per-provider on schedule)
   - Forecast aggregator Lambda (triggered after ingestion completes)
-  - Own Bedrock IAM role (not needed for this stack — no SFN)
   - CloudWatch alarms: ingestion failures, aggregator errors, no data in 14 days
   - CloudWatch dashboard: forecasts fetched, providers active, conflicts detected
-- [ ] **9.2** Grant cross-stack permissions
-  - ForecastProviderStack adds `FORECAST_STATE_TABLE` env var to existing timing_estimation Lambda
-  - ForecastProviderStack adds DynamoDB read IAM policy to timing_estimation Lambda role
-  - This is the mechanism by which the plugin "enables itself" in core without core code knowing about it
-- [ ] **9.3** S3 permissions for storing raw forecast archives
-- [ ] **9.4** Secrets Manager read permission for custom model fetcher (auth credentials)
-- [ ] **9.5** EventBridge PutEvents permission for publishing forecast.updated events
+- [ ] **9.2** S3 permissions for storing raw forecast archives
+- [ ] **9.3** Secrets Manager read permission for custom model fetcher (auth credentials)
+- [ ] **9.4** EventBridge PutEvents permission for publishing forecast.updated events
 
 ---
 
@@ -143,8 +144,9 @@ This is the one core modification required. Gated by env var — zero impact whe
 - [ ] **10.2** Register in `cdk/app.py`
   - Read feature flag
   - Conditional import and instantiation of ForecastProviderStack
-  - Pass data_bucket_name, ops_topic_arn, timing_estimation_function_name
-  - Add dependency on prediction stack (needs Lambda ARN for cross-stack env var update)
+  - Pass data_bucket_name, ops_topic_arn to ForecastProviderStack
+  - Pass `forecast_state_table="healthsignals-forecast-state"` to PredictionStack when plugin is enabled (same pattern as delivery stack's plugin_env_vars)
+  - Add dependency: ForecastProviderStack depends on prediction + ingestion stacks
   - No dispatch plugin needed (this module enriches core predictions, doesn't dispatch its own alerts)
 
 ---
@@ -211,11 +213,15 @@ This is the one core modification required. Gated by env var — zero impact whe
 
 ### One Core Modification (Acknowledged)
 
-This plugin requires modifying the core `timing_estimation` Lambda to optionally read from the forecast-state DynamoDB table. This is:
+This plugin requires modifying two core files:
 
-- **Gated by env var** — when `FORECAST_STATE_TABLE` is empty/unset, the Lambda behaves identically to today
-- **Failure-tolerant** — if the DynamoDB query fails, the Lambda logs a warning and continues with `external_forecast: null`
-- **Applied by the plugin stack** — the ForecastProviderStack adds the env var and IAM policy to the existing Lambda (the core CDK code doesn't change)
+1. **`timing_estimation/handler.py`** — optionally reads from forecast-state DynamoDB table (gated by `FORECAST_STATE_TABLE` env var; when empty, behaves identically to today; if query fails, logs warning and continues)
+2. **`pipeline_coordinator/handler.py`** — one line addition to forward `external_forecast` from timing_result to the county_alert dict passed to Step Functions
+
+CDK wiring:
+
+- **`prediction_stack.py`** accepts optional `forecast_state_table` parameter — when set, adds the env var and DynamoDB read IAM to timing_estimation Lambda
+- **`app.py`** passes the table name to prediction_stack when the forecast plugin is enabled (same pattern as delivery stack's `plugin_env_vars`)
 
 ### State Normalization via `shared/geo_utils`
 
