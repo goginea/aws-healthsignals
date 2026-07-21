@@ -387,8 +387,134 @@ def _meets_threshold(alert_severity: str, min_threshold: str) -> bool:
 
 
 # === Delivery methods ===
+def _markdown_to_html(md: str) -> str:
+    """Convert Bedrock-generated markdown to HTML for email rendering.
+
+    Handles: headers, bold, italic, bullet lists, horizontal rules, tables,
+    and paragraphs. Lightweight — no external dependencies needed.
+    """
+    import re
+
+    lines = md.split("\n")
+    html_lines = []
+    in_list = False
+    in_table = False
+
+    for line in lines:
+        stripped = line.strip()
+
+        # Horizontal rule
+        if stripped == "---" or stripped == "***":
+            if in_list:
+                html_lines.append("</ul>")
+                in_list = False
+            if in_table:
+                html_lines.append("</table>")
+                in_table = False
+            html_lines.append("<hr>")
+            continue
+
+        # Table rows (detect by | separators)
+        if "|" in stripped and stripped.startswith("|") and stripped.endswith("|"):
+            cells = [c.strip() for c in stripped.strip("|").split("|")]
+            # Skip separator rows (|---|---|)
+            if all(c.replace("-", "").replace(":", "") == "" for c in cells):
+                continue
+            if not in_table:
+                if in_list:
+                    html_lines.append("</ul>")
+                    in_list = False
+                html_lines.append('<table style="border-collapse:collapse;width:100%;margin:10px 0">')
+                # First table row is header
+                html_lines.append("<tr>" + "".join(
+                    f'<th style="border:1px solid #ddd;padding:8px;background:#f4f4f4;text-align:left">{c}</th>'
+                    for c in cells
+                ) + "</tr>")
+                in_table = True
+            else:
+                html_lines.append("<tr>" + "".join(
+                    f'<td style="border:1px solid #ddd;padding:8px">{c}</td>'
+                    for c in cells
+                ) + "</tr>")
+            continue
+
+        if in_table and not ("|" in stripped):
+            html_lines.append("</table>")
+            in_table = False
+
+        # Headers
+        if stripped.startswith("### "):
+            if in_list:
+                html_lines.append("</ul>")
+                in_list = False
+            html_lines.append(f'<h3 style="color:#333;margin:16px 0 8px">{stripped[4:]}</h3>')
+            continue
+        if stripped.startswith("## "):
+            if in_list:
+                html_lines.append("</ul>")
+                in_list = False
+            html_lines.append(f'<h2 style="color:#1a5276;margin:20px 0 10px;border-bottom:1px solid #eee;padding-bottom:5px">{stripped[3:]}</h2>')
+            continue
+        if stripped.startswith("# "):
+            if in_list:
+                html_lines.append("</ul>")
+                in_list = False
+            html_lines.append(f'<h1 style="color:#154360;margin:24px 0 12px">{stripped[2:]}</h1>')
+            continue
+
+        # Bullet lists (- or * at start)
+        if re.match(r"^[-*]\s", stripped):
+            if not in_list:
+                html_lines.append('<ul style="margin:8px 0;padding-left:24px">')
+                in_list = True
+            content = stripped[2:]
+            html_lines.append(f"<li>{content}</li>")
+            continue
+
+        # Indented bullets (  - or    -)
+        indent_match = re.match(r"^(\s+)[-*]\s(.+)", line)
+        if indent_match:
+            if not in_list:
+                html_lines.append('<ul style="margin:8px 0;padding-left:24px">')
+                in_list = True
+            content = indent_match.group(2)
+            html_lines.append(f'<li style="margin-left:16px">{content}</li>')
+            continue
+
+        # Non-list line closes any open list
+        if in_list and stripped:
+            html_lines.append("</ul>")
+            in_list = False
+
+        # Empty line = paragraph break
+        if not stripped:
+            html_lines.append("<br>")
+            continue
+
+        # Regular paragraph
+        html_lines.append(f"<p style='margin:6px 0'>{stripped}</p>")
+
+    if in_list:
+        html_lines.append("</ul>")
+    if in_table:
+        html_lines.append("</table>")
+
+    html_body = "\n".join(html_lines)
+
+    # Inline formatting: **bold**, *italic*, `code`
+    html_body = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", html_body)
+    html_body = re.sub(r"\*(.+?)\*", r"<em>\1</em>", html_body)
+    html_body = re.sub(r"`(.+?)`", r'<code style="background:#f5f5f5;padding:2px 4px;border-radius:3px">\1</code>', html_body)
+
+    # Wrap in email template
+    return f"""<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;max-width:700px;margin:0 auto;padding:20px;color:#333;line-height:1.6">
+{html_body}
+</div>"""
+
+
 def _send_email(sender: str, recipient: str, subject: str, body: str) -> None:
     """Send alert email via SES."""
+    html_body = _markdown_to_html(body)
     ses.send_email(
         Source=sender,
         Destination={"ToAddresses": [recipient]},
@@ -396,7 +522,7 @@ def _send_email(sender: str, recipient: str, subject: str, body: str) -> None:
             "Subject": {"Data": subject},
             "Body": {
                 "Text": {"Data": body},
-                "Html": {"Data": f"<pre>{body}</pre>"},
+                "Html": {"Data": html_body},
             },
         },
     )

@@ -12,6 +12,7 @@ import logging
 from datetime import datetime
 
 from boto3.dynamodb.conditions import Key
+from .handler import _markdown_to_html
 
 logger = logging.getLogger()
 
@@ -227,7 +228,7 @@ def _dispatch_to_subscriber(
                 "Subject": {"Data": subject},
                 "Body": {
                     "Text": {"Data": email_body},
-                    "Html": {"Data": f"<pre>{email_body}</pre>"},
+                    "Html": {"Data": _markdown_to_html(email_body)},
                 },
             },
         )
