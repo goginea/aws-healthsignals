@@ -276,11 +276,11 @@ class ForecastProviderStack(Stack):
                 metric_name="forecasts_written",
                 dimensions_map={"Provider": "cdc_flusight"},
                 statistic="Sum",
-                period=Duration.days(14),
+                period=Duration.days(7),
             ),
             threshold=1,
             evaluation_periods=1,
-            alarm_description="No FluSight forecast data written in 14 days",
+            alarm_description="No FluSight forecast data written in 7 days",
             comparison_operator=cw.ComparisonOperator.LESS_THAN_THRESHOLD,
             treat_missing_data=cw.TreatMissingData.BREACHING,
         )
