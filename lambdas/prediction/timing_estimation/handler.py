@@ -58,6 +58,14 @@ def lambda_handler(event: dict, context: Any) -> dict:
     week = event.get("week")
     affected_counties = event.get("affected_counties", [])
 
+    # Support single-county invocation (from pipeline_coordinator per-county calls)
+    if not affected_counties and event.get("county_fips"):
+        affected_counties = [{
+            "county_fips": event["county_fips"],
+            "county_name": event.get("county_name", "Unknown"),
+            "affinity_weight": event.get("affinity_weight", 1.0),
+        }]
+
     if not affected_counties:
         return {"estimates": [], "reason": "No affected counties"}
 
@@ -133,7 +141,7 @@ def lambda_handler(event: dict, context: Any) -> dict:
             forecast_state_table_name, state_key, disease_key, week
         )
 
-    return {
+    result = {
         "disease": disease_key,
         "leader_msa": leader_msa,
         "week": week,
@@ -141,6 +149,19 @@ def lambda_handler(event: dict, context: Any) -> dict:
         "total_counties": len(estimates),
         "external_forecast": external_forecast,
     }
+
+    # For single-county calls (from pipeline_coordinator), also return flat fields
+    # that the coordinator expects for building the SFN input
+    if len(estimates) == 1:
+        est = estimates[0]
+        result["estimated_lag_weeks"] = est["timing"]["lag_weeks_median"]
+        result["severity_multiplier"] = est["severity"]["multiplier_median"]
+        result["confidence"] = est["confidence"]
+        result["seasons_calibrated"] = est["seasons_calibrated"]
+        result["warning_window_weeks"] = est["timing"]["expected_arrival_weeks_from_now"]
+        result["cdc_activity_level"] = est.get("cdc_activity_level", "unknown")
+
+    return result
 
 
 def get_calibration_data(county_fips: str, leader_msa: str, disease: str) -> list:
