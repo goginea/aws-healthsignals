@@ -126,6 +126,11 @@ echo ""
 echo -e "${YELLOW}[3/8] Clearing alert state for test season...${NC}"
 # Delete any existing leader detection for influenza 2026-27 season
 # (week 202645 → season 2026-27 because week 45 >= 40)
+# MSA code 26420 = Houston (primary leader metro for Texas)
+aws dynamodb delete-item \
+    --table-name "$ALERT_TABLE" \
+    --key '{"county_fips": {"S": "LEADER_26420"}, "disease_season": {"S": "influenza_2026-27"}}' \
+    2>/dev/null || true
 aws dynamodb delete-item \
     --table-name "$ALERT_TABLE" \
     --key '{"county_fips": {"S": "LEADER_41700"}, "disease_season": {"S": "influenza_2026-27"}}' \
