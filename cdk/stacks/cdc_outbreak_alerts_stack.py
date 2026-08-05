@@ -62,6 +62,8 @@ class CDCOutbreakAlertsStack(Stack):
                 actions=["bedrock:InvokeModel"],
                 resources=[
                     f"arn:aws:bedrock:{self.region}::foundation-model/us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+                    f"arn:aws:bedrock:{self.region}:{self.account}:inference-profile/us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+                    f"arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-sonnet-4-5-20250929-v1:0",
                 ],
             )
         )
