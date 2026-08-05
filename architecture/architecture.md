@@ -4,6 +4,8 @@
 
 Amazon HealthSignals is a **deterministic workflow** (not an autonomous agent) that uses generative AI for interpretation and communication, not for prediction. The prediction mechanism is historical lookup + arithmetic.
 
+The system consists of a **core pipeline** for disease surveillance and **three plugin modules** (CDC Outbreak Alerts, Drug Shortage Intelligence, Forecast Providers) that extend functionality without modifying core code.
+
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                              DATA PLANE                                   │
@@ -34,6 +36,70 @@ Amazon HealthSignals is a **deterministic workflow** (not an autonomous agent) t
 │  │  diseases/   │  Zero code changes for expansion.                     │
 │  │  data_srcs/  │                                                        │
 │  └──────────────┘                                                        │
+└─────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│                        PLUGIN: CDC OUTBREAK ALERTS                        │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                           │
+│  EventBridge (daily 8AM UTC) → CDC Outbreak Fetcher Lambda               │
+│    → Fetch RSS feed (tools.cdc.gov)                                      │
+│    → Detect new/updated outbreaks (DynamoDB state tracking)              │
+│    → Extract structured data via Bedrock (disease, states, cases)        │
+│    → Store to S3 + invoke Outbreak Processor                             │
+│                                                                           │
+│  Outbreak Processor Lambda                                               │
+│    → Normalize state names → map to monitored states                    │
+│    → Fan out: one SFN execution per affected state                      │
+│                                                                           │
+│  Step Functions (outbreak_alert_generation):                             │
+│    Severity Classification → Outbreak Brief → Dispatch Alert            │
+│    (3 Bedrock calls, all Sonnet 4.5)                                    │
+│                                                                           │
+│  DynamoDB: healthsignals-cdc-outbreak-state                             │
+│  Alert type: cdc_outbreak (via dispatcher plugin registry)              │
+└─────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│                     PLUGIN: DRUG SHORTAGE INTELLIGENCE                    │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                           │
+│  EventBridge (weekly Mon 6AM) → SQS → openFDA Shortage Fetcher Lambda   │
+│    → Poll api.fda.gov/drug/shortages                                    │
+│    → Store raw data to S3                                                │
+│                                                                           │
+│  S3 event → Shortage Change Detector Lambda                             │
+│    → Classify: NEW / WORSENING / RESOLVED                               │
+│    → Store alerts to healthsignals-shortage-alerts DynamoDB             │
+│                                                                           │
+│  EventBridge event (disease threshold crossed) → Shortage Enrichment    │
+│    → Combine disease outbreak context with shortage data                │
+│    → Start shortage SFN execution                                        │
+│                                                                           │
+│  Step Functions (shortage_alert_generation):                             │
+│    Severity Classification → Shortage Brief → Dispatch Alert            │
+│                                                                           │
+│  Alert types: shortage, combined (via dispatcher plugin registry)        │
+└─────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│                       PLUGIN: FORECAST PROVIDERS                          │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                           │
+│  EventBridge (weekly Wed):                                               │
+│    10AM → FluSight Forecast Fetcher Lambda                              │
+│    11AM → RSV Hub Forecast Fetcher Lambda                               │
+│    12PM → Forecast Aggregator Lambda                                    │
+│                                                                           │
+│  Custom Model Fetcher (on-demand invocation)                            │
+│                                                                           │
+│  Forecast Aggregator:                                                    │
+│    → Weighted mean across providers                                      │
+│    → Conflict detection (>50% disagreement)                             │
+│    → Store to healthsignals-forecast-state DynamoDB                     │
+│                                                                           │
+│  Output consumed by: Timing Estimation Lambda (core pipeline)           │
+│    → External forecast context passed to Bedrock situation briefs       │
 └─────────────────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────────┐
@@ -87,9 +153,9 @@ Amazon HealthSignals is a **deterministic workflow** (not an autonomous agent) t
 │  Supporting Services:                                            │
 │  ┌───────────────────┐  ┌─────────────────────────────────────┐ │
 │  │ Bedrock Guardrails │  │ Knowledge Bases                     │ │
-│  │ • No clinical Rx   │  │ • CDC Guidelines (precision, 6 docs)│ │
+│  │ • No clinical Rx   │  │ • CDC Guidelines (precision, 7 docs)│ │
 │  │ • No diagnoses     │  │ • Comms Templates (variety, 33 tmpl)│ │
-│  │ • No quarantine    │  │                                     │ │
+│  │ • No quarantine    │  │ • Shortage Guidance (3 docs)        │ │
 │  └───────────────────┘  └─────────────────────────────────────┘ │
 └─────────────────────────────────────────────────────────────────┘
 
@@ -123,23 +189,24 @@ Amazon HealthSignals is a **deterministic workflow** (not an autonomous agent) t
 
 ### Why Step Functions + InvokeModel (Not Bedrock Agent)?
 
-| Consideration | Bedrock Agent | Step Functions + InvokeModel |
-|---------------|---------------|------------------------------|
-| Workflow type | Autonomous, agentic | Deterministic, orchestrated |
-| Model control | Agent chooses | We route explicitly |
-| Cost control | Unpredictable (agent may loop) | Fixed 4 calls per alert |
-| Observability | Opaque agent reasoning | X-Ray traces each step |
-| Error handling | Agent retry logic | Explicit Catch/Retry states |
-| Model routing | Single model | Sonnet 4.5 all steps, Sonnet 5 for HIGH/CRIT checklist (conditional) |
+| Consideration  | Bedrock Agent                  | Step Functions + InvokeModel                                         |
+| -------------- | ------------------------------ | -------------------------------------------------------------------- |
+| Workflow type  | Autonomous, agentic            | Deterministic, orchestrated                                          |
+| Model control  | Agent chooses                  | We route explicitly                                                  |
+| Cost control   | Unpredictable (agent may loop) | Fixed 4 calls per alert                                              |
+| Observability  | Opaque agent reasoning         | X-Ray traces each step                                               |
+| Error handling | Agent retry logic              | Explicit Catch/Retry states                                          |
+| Model routing  | Single model                   | Sonnet 4.5 all steps, Sonnet 5 for HIGH/CRIT checklist (conditional) |
 
 **Decision:** Our workflow is deterministic — we always do exactly 4 steps in order. There's no "decide what to do next" logic. Step Functions gives us explicit control over model routing, cost, and observability.
 
-### Why Two Knowledge Bases?
+### Why Three Knowledge Bases?
 
-| KB | Content | Retrieval Strategy | Reason |
-|----|---------|-------------------|--------|
-| CDC Guidelines | 6 official guidance docs (43 KB) | Precision (Top-3, high threshold) | Need exact, authoritative facts |
-| Comms Templates | 33 writing templates (49 KB) | Variety (Top-8, MMR diversity) | Need diverse stylistic input |
+| KB                | Content                      | Retrieval Strategy                | Reason                                |
+| ----------------- | ---------------------------- | --------------------------------- | ------------------------------------- |
+| CDC Guidelines    | 7 official guidance docs     | Precision (Top-3, high threshold) | Need exact, authoritative facts       |
+| Comms Templates   | 33 writing templates (49 KB) | Variety (Top-8, MMR diversity)    | Need diverse stylistic input          |
+| Shortage Guidance | 3 FDA/clinical docs          | Precision                         | Authoritative substitution frameworks |
 
 ### Why Dynamic Data In-Context (Not in KB)?
 
@@ -147,17 +214,18 @@ Surveillance data (metro signals, thresholds, peaks) changes weekly. Knowledge B
 
 ### Why SQS Between EventBridge and Lambdas?
 
-| Without SQS | With SQS |
-|-------------|----------|
+| Without SQS                         | With SQS                                     |
+| ----------------------------------- | -------------------------------------------- |
 | EventBridge directly invokes Lambda | EventBridge sends to SQS, SQS invokes Lambda |
-| API failure = silent loss | API failure = automatic retry (3×) |
-| No backpressure | Queue absorbs spikes |
-| No failure forensics | DLQ retains failed messages 14 days |
-| One failure blocks all | Each source independent |
+| API failure = silent loss           | API failure = automatic retry (3×)           |
+| No backpressure                     | Queue absorbs spikes                         |
+| No failure forensics                | DLQ retains failed messages 14 days          |
+| One failure blocks all              | Each source independent                      |
 
 ### Why a Pipeline Coordinator (Not Direct S3→Step Functions)?
 
 The prediction pipeline has **conditional fan-out** — it only proceeds if a threshold is crossed, and then fans out to N counties (variable). Step Functions can't conditionally start itself based on S3 events with dynamic iteration. The coordinator Lambda provides:
+
 1. Conditional gating (only proceed if leader detected)
 2. Dynamic fan-out (different number of counties each time)
 3. Circuit breaker (safety: >20 counties = human review)
@@ -167,20 +235,35 @@ The prediction pipeline has **conditional fan-out** — it only proceeds if a th
 ### Token Economics
 
 Per county per alert cycle (4 InvokeModel calls):
+
 ```
 Step 1 (Situation Brief):     ~1,500 input + 800 output = 2,300 tokens
-Step 2 (Severity):            ~1,200 input + 200 output = 1,400 tokens  
+Step 2 (Severity):            ~1,200 input + 200 output = 1,400 tokens
 Step 3 (Checklist):           ~2,000 input + 1,500 output = 3,500 tokens
 Step 4 (Communication):       ~2,500 input + 1,500 output = 4,000 tokens
                                                            ──────────────
 TOTAL per county per alert:                                ~11,200 tokens
 ```
 
-At Claude Sonnet 4.5 pricing (~$3.00/$15.00 per MTok input/output):
-- Per alert cycle: ~$0.08 (7,200 input × $3/MTok + 4,000 output × $15/MTok)
-- 100 counties × 4 alerts/season: ~$32 in Bedrock costs
-- Monthly (100 counties, active monitoring): $184–$358
-- Monthly amortized: $1.84–$3.58 per county
+Per CDC outbreak alert (3 InvokeModel calls, per state):
+
+```
+Step 1 (Severity):            ~1,200 input + 200 output = 1,400 tokens
+Step 2 (Outbreak Brief):      ~2,000 input + 1,500 output = 3,500 tokens
+Dispatch (via Lambda):        0 Bedrock tokens
+                                                           ──────────────
+TOTAL per state per outbreak:                              ~4,900 tokens
+```
+
+Plus: 1 Bedrock extraction call per outbreak in the fetcher (~2K input + 500 output).
+
+At Claude Sonnet 4.5 pricing ($3.00/$15.00 per MTok input/output):
+
+- Per core alert cycle: ~$0.08 (7,200 input × $3/MTok + 4,000 output × $15/MTok)
+- Per CDC outbreak alert (per state): ~$0.03
+- Per CDC extraction: ~$0.01
+- Peak month (100 counties, all modules active): ~$100–185 total
+- Per county: ~$1.00–1.85/month
 
 ### Model Routing Logic
 
@@ -202,15 +285,15 @@ Steps 1, 2, 4 always use Sonnet 4.5 regardless of severity.
 ```
 Monday 6 AM UTC:
   EventBridge → SQS queues (3 independent queues)
-  
+
 Monday 6:00-6:05 AM:
   SQS → triggers 3 Lambda fetchers (independent, isolated failures)
   Each fetcher: API call → store raw JSON to S3
   Failure: SQS retries up to 3×, then → DLQ (alarmed)
-  
+
 Monday 6:05 AM:
   S3 PutObject event (raw/delphi/*.json) → Pipeline Coordinator Lambda
-  
+
 Monday 6:06 AM:
   Pipeline Coordinator (orchestration):
     1. Load latest metro signals from S3
@@ -240,6 +323,60 @@ Monday 6:25 AM:
   Total time from data fetch to delivery: ~20-25 minutes
 ```
 
+### CDC Outbreak Alert Flow (Daily)
+
+```
+Daily 8 AM UTC:
+  EventBridge → CDC Outbreak Fetcher Lambda (direct, no SQS)
+
+  CDC Outbreak Fetcher:
+    1. Fetch RSS feed from tools.cdc.gov
+    2. Parse XML → list of outbreak items
+    3. Compare against DynamoDB state table (new vs updated vs unchanged)
+    4. For each new/updated outbreak:
+       → Fetch linked CDC investigation page (follow redirects)
+       → Invoke Bedrock to extract structured data (disease, states, cases)
+       → Store extracted JSON to S3
+       → Update DynamoDB state
+       → Invoke Outbreak Processor Lambda (async)
+
+  Outbreak Processor Lambda:
+    1. Normalize state names (geo_utils)
+    2. If affected_states empty → fall back to all monitored states
+    3. For each monitored state with subscribing counties:
+       → StartExecution on outbreak SFN
+
+  Step Functions (per state, ~15-20 seconds):
+    → Severity Classification (Bedrock)
+    → Outbreak Situation Brief (Bedrock)
+    → Dispatch Alert (Lambda → Alert Dispatcher)
+      → Query subscribers by state-index GSI
+      → SES email + SNS SMS
+```
+
+### Drug Shortage Flow (Weekly + Event-Driven)
+
+```
+Monday 6 AM UTC:
+  EventBridge → SQS → openFDA Shortage Fetcher Lambda
+    → Fetch api.fda.gov/drug/shortages
+    → Store to S3
+
+  S3 PutObject → Shortage Change Detector Lambda
+    → Compare against previous data
+    → Classify: NEW / WORSENING / RESOLVED
+    → Store to healthsignals-shortage-alerts DynamoDB
+    → Emit EventBridge event if actionable
+
+  Disease threshold crossed (from core pipeline):
+    → EventBridge event → Shortage Enrichment Lambda
+      → Combine disease context + relevant shortage data
+      → Start shortage SFN execution
+
+  Shortage SFN:
+    → Severity Classification → Shortage Brief → Dispatch Alert
+```
+
 ## Security & Compliance Considerations
 
 - **No PHI/PII stored**: System uses aggregate population signals, never individual patient data
@@ -252,16 +389,16 @@ Monday 6:25 AM:
 
 ## Scalability
 
-| Component | Pilot (5 counties) | Scale (500 counties) | Action Needed |
-|-----------|--------------------|--------------------|---------------|
-| Lambda concurrency | 1-3 | 50-100 | Request quota increase |
-| DynamoDB | On-demand OK | On-demand OK | No change |
-| Bedrock throughput | Default OK | May hit RPM limits | Request quota increase |
-| Step Functions | Default OK | Default OK | No change |
-| SES sending | Sandbox (50/day) | Production (50K/day) | Request production access |
-| API Gateway | Default OK | Default OK | No change |
-| SQS throughput | Default OK | Default OK | No change |
-| Config loading | S3 GetObject (cached) | S3 GetObject (cached) | No change |
+| Component          | Pilot (5 counties)    | Scale (500 counties)  | Action Needed             |
+| ------------------ | --------------------- | --------------------- | ------------------------- |
+| Lambda concurrency | 1-3                   | 50-100                | Request quota increase    |
+| DynamoDB           | On-demand OK          | On-demand OK          | No change                 |
+| Bedrock throughput | Default OK            | May hit RPM limits    | Request quota increase    |
+| Step Functions     | Default OK            | Default OK            | No change                 |
+| SES sending        | Sandbox (50/day)      | Production (50K/day)  | Request production access |
+| API Gateway        | Default OK            | Default OK            | No change                 |
+| SQS throughput     | Default OK            | Default OK            | No change                 |
+| Config loading     | S3 GetObject (cached) | S3 GetObject (cached) | No change                 |
 
 ## Subscription System
 
@@ -293,13 +430,16 @@ config/
 │   └── _template.json   # Copy to add new state
 ├── diseases/            # Per-disease: thresholds, signals, Socrata IDs
 │   ├── influenza.json   # 1.0% threshold, ymmh-divb wastewater
-│   ├── rsv.json         # 0.5% threshold, 45cq-cw4i wastewater  
+│   ├── rsv.json         # 0.5% threshold, 45cq-cw4i wastewater
 │   ├── covid.json       # 0.3% threshold, 2ew6-ywp6 wastewater
 │   └── _template.json   # Copy to add new disease
+├── forecast_providers/  # FluSight, RSV Hub, custom model configs
+├── shortage_monitoring/ # Drug shortage monitoring config
 └── subscription_settings.json
 ```
 
 The shared config_loader (`lambdas/shared/config_loader.py`):
+
 - Loads from S3 in production, local filesystem for dev/test
 - Caches in memory for Lambda warm-start reuse
 - Validates required fields at load time

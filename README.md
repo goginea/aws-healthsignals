@@ -52,18 +52,18 @@ Rural health departments (2,000+ counties, <50K population) lack resources for r
 │                                                                                 │
 │  ┌──────────────┐     ┌──────────────────┐     ┌──────────────────────────┐   │
 │  │  EventBridge │────▶│  SQS Queues      │────▶│  Lambda Ingestion Fleet  │   │
-│  │  (weekly +   │     │  (3 queues + DLQ)│     │  ┌────────┐ ┌────────┐  │   │
-│  │   daily)     │     └──────────────────┘     │  │Delphi  │ │CDC NWSS│  │   │
-│  └──────────────┘                              │  │Fetcher │ │Fetcher │  │   │
-│                                                 │  └────────┘ └────────┘  │   │
-│                                                 │  ┌────────┐ ┌────────┐  │   │
-│                                                 │  │CDC Resp│ │CDC RSS │  │   │
-│                                                 │  │Fetcher │ │Fetcher │  │   │
-│                                                 │  └────────┘ └────────┘  │   │
-│                                                 │  ┌────────┐ ┌────────┐  │   │
-│                                                 │  │openFDA │ │FluSight│  │   │
-│                                                 │  │Shortage│ │/RSVHub │  │   │
-│                                                 │  └───┬────┘ └───┬────┘  │   │
+│  │  Schedules   │     │  (core 3 + DLQ)  │     │  ┌────────┐ ┌────────┐  │   │
+│  │  ┌────────┐  │     └──────────────────┘     │  │Delphi  │ │CDC NWSS│  │   │
+│  │  │Weekly  │  │                              │  │Fetcher │ │Fetcher │  │   │
+│  │  │Mon 6AM │  │     EventBridge ──────────▶  │  └────────┘ └────────┘  │   │
+│  │  ├────────┤  │     (direct invoke)          │  ┌────────┐ ┌────────┐  │   │
+│  │  │Daily   │  │                              │  │CDC Resp│ │CDC RSS │  │   │
+│  │  │8AM UTC │  │     ┌──────────────────┐     │  │Fetcher │ │Fetcher │  │   │
+│  │  ├────────┤  │────▶│  SQS (shortage)  │────▶│  └────────┘ └────────┘  │   │
+│  │  │Weekly  │  │     └──────────────────┘     │  ┌────────┐ ┌────────┐  │   │
+│  │  │Wed 10AM│  │                              │  │openFDA │ │FluSight│  │   │
+│  │  └────────┘  │                              │  │Shortage│ │/RSVHub │  │   │
+│  └──────────────┘                              │  └───┬────┘ └───┬────┘  │   │
 │                                                 └─────┼───────────┼───────┘   │
 │                                                       │           │            │
 │                                                       ▼           ▼            │
