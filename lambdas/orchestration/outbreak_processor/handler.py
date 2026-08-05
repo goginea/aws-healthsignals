@@ -144,6 +144,7 @@ def lambda_handler(event: dict, context: Any) -> dict:
                 "status": event.get("status", "active"),
                 "summary": event.get("summary", ""),
                 "cdc_link": event.get("cdc_link", ""),
+                "pub_date": event.get("pub_date", ""),
                 "processed_at": datetime.now(timezone.utc).isoformat(),
             }
 
