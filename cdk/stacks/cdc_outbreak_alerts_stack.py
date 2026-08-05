@@ -2,6 +2,7 @@
 
 Deploys all resources for the CDC Outbreak Alerts feature:
 - DynamoDB table (cdc-outbreak-state)
+- SQS queue + DLQ for ingestion backpressure and failure recovery
 - CDC Outbreak Fetcher Lambda + EventBridge daily schedule
 - Outbreak Processor Lambda
 - Step Functions state machine (outbreak alert generation)
@@ -16,8 +17,10 @@ from aws_cdk import (
     RemovalPolicy,
     aws_dynamodb as dynamodb,
     aws_lambda as _lambda,
+    aws_sqs as sqs,
     aws_events as events,
     aws_events_targets as targets,
+    aws_lambda_event_sources as lambda_event_sources,
     aws_iam as iam,
     aws_stepfunctions as sfn,
     aws_cloudwatch as cw,
@@ -98,6 +101,28 @@ class CDCOutbreakAlertsStack(Stack):
             billing_mode=dynamodb.BillingMode.PAY_PER_REQUEST,
             removal_policy=RemovalPolicy.RETAIN,
             time_to_live_attribute="ttl",
+        )
+
+        # --- Dead Letter Queue (CDC outbreak-specific) ---
+        self.cdc_outbreak_dlq = sqs.Queue(
+            self,
+            "CDCOutbreakDLQ",
+            queue_name="healthsignals-cdc-outbreak-dlq",
+            retention_period=Duration.days(14),
+            visibility_timeout=Duration.minutes(1),
+        )
+
+        # --- SQS: CDC Outbreaks Ingestion Queue ---
+        self.cdc_outbreak_queue = sqs.Queue(
+            self,
+            "CDCOutbreakIngestionQueue",
+            queue_name="healthsignals-ingest-cdc-outbreaks",
+            visibility_timeout=Duration.minutes(6),  # > Lambda timeout (5 min)
+            retention_period=Duration.days(4),
+            dead_letter_queue=sqs.DeadLetterQueue(
+                max_receive_count=3,  # 3 retries before DLQ
+                queue=self.cdc_outbreak_dlq,
+            ),
         )
 
         # --- CDC Outbreak Fetcher Lambda ---
@@ -211,10 +236,18 @@ class CDCOutbreakAlertsStack(Stack):
             schedule=events.Schedule.cron(
                 minute="0", hour="8"
             ),
-            description="Triggers daily CDC Outbreaks RSS fetch at 8 AM UTC",
+            description="Triggers daily CDC Outbreaks RSS fetch at 8 AM UTC via SQS",
         )
         self.daily_schedule.add_target(
-            targets.LambdaFunction(self.cdc_outbreak_fetcher)
+            targets.SqsQueue(self.cdc_outbreak_queue)
+        )
+
+        # SQS triggers fetcher Lambda
+        self.cdc_outbreak_fetcher.add_event_source(
+            lambda_event_sources.SqsEventSource(
+                self.cdc_outbreak_queue,
+                batch_size=1,
+            )
         )
 
         # --- CloudWatch Alarms ---
@@ -261,6 +294,20 @@ class CDCOutbreakAlertsStack(Stack):
         if ops_topic:
             fetcher_error_alarm.add_alarm_action(cw_actions.SnsAction(ops_topic))
             no_data_alarm.add_alarm_action(cw_actions.SnsAction(ops_topic))
+
+        # Alarm: Messages in DLQ (ingestion failures exhausted retries)
+        dlq_alarm = cw.Alarm(
+            self,
+            "CDCOutbreakDLQAlarm",
+            metric=self.cdc_outbreak_dlq.metric_approximate_number_of_messages_visible(),
+            threshold=1,
+            evaluation_periods=1,
+            alarm_description="CDC Outbreak ingestion DLQ has messages — fetcher failed after 3 retries.",
+            comparison_operator=cw.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+            treat_missing_data=cw.TreatMissingData.NOT_BREACHING,
+        )
+        if ops_topic:
+            dlq_alarm.add_alarm_action(cw_actions.SnsAction(ops_topic))
 
         # --- CloudWatch Dashboard ---
         self.dashboard = cw.Dashboard(

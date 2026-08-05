@@ -2,6 +2,7 @@
 
 Deploys all resources for the Forecast Provider feature:
 - DynamoDB forecast-state table
+- SQS queues + shared DLQ for ingestion backpressure and failure recovery
 - FluSight fetcher Lambda + weekly schedule
 - RSV Hub fetcher Lambda + weekly schedule
 - Custom model fetcher Lambda
@@ -16,8 +17,10 @@ from aws_cdk import (
     RemovalPolicy,
     aws_dynamodb as dynamodb,
     aws_lambda as _lambda,
+    aws_sqs as sqs,
     aws_events as events,
     aws_events_targets as targets,
+    aws_lambda_event_sources as lambda_event_sources,
     aws_iam as iam,
     aws_cloudwatch as cw,
     aws_cloudwatch_actions as cw_actions,
@@ -63,6 +66,41 @@ class ForecastProviderStack(Stack):
             billing_mode=dynamodb.BillingMode.PAY_PER_REQUEST,
             removal_policy=RemovalPolicy.RETAIN,
             time_to_live_attribute="ttl",
+        )
+
+        # --- Dead Letter Queue (shared across forecast provider fetchers) ---
+        self.forecast_dlq = sqs.Queue(
+            self,
+            "ForecastDLQ",
+            queue_name="healthsignals-forecast-dlq",
+            retention_period=Duration.days(14),
+            visibility_timeout=Duration.minutes(1),
+        )
+
+        # --- SQS: FluSight Ingestion Queue ---
+        self.flusight_queue = sqs.Queue(
+            self,
+            "FluSightIngestionQueue",
+            queue_name="healthsignals-ingest-flusight",
+            visibility_timeout=Duration.minutes(6),  # > Lambda timeout (5 min)
+            retention_period=Duration.days(4),
+            dead_letter_queue=sqs.DeadLetterQueue(
+                max_receive_count=3,
+                queue=self.forecast_dlq,
+            ),
+        )
+
+        # --- SQS: RSV Hub Ingestion Queue ---
+        self.rsv_hub_queue = sqs.Queue(
+            self,
+            "RSVHubIngestionQueue",
+            queue_name="healthsignals-ingest-rsvhub",
+            visibility_timeout=Duration.minutes(6),
+            retention_period=Duration.days(4),
+            dead_letter_queue=sqs.DeadLetterQueue(
+                max_receive_count=3,
+                queue=self.forecast_dlq,
+            ),
         )
 
         # --- FluSight Fetcher Lambda ---
@@ -226,7 +264,15 @@ class ForecastProviderStack(Stack):
             schedule=events.Schedule.cron(minute="0", hour="10", week_day="WED"),
             description="Weekly FluSight ensemble forecast fetch (Wednesday 10 AM UTC)",
         )
-        self.flusight_schedule.add_target(targets.LambdaFunction(self.flusight_fetcher))
+        self.flusight_schedule.add_target(targets.SqsQueue(self.flusight_queue))
+
+        # SQS triggers FluSight fetcher Lambda
+        self.flusight_fetcher.add_event_source(
+            lambda_event_sources.SqsEventSource(
+                self.flusight_queue,
+                batch_size=1,
+            )
+        )
 
         # RSV Hub: Weekly on Wednesday at 11 AM UTC
         self.rsv_hub_schedule = events.Rule(
@@ -235,9 +281,19 @@ class ForecastProviderStack(Stack):
             schedule=events.Schedule.cron(minute="0", hour="11", week_day="WED"),
             description="Weekly RSV Hub ensemble forecast fetch (Wednesday 11 AM UTC)",
         )
-        self.rsv_hub_schedule.add_target(targets.LambdaFunction(self.rsv_hub_fetcher))
+        self.rsv_hub_schedule.add_target(targets.SqsQueue(self.rsv_hub_queue))
+
+        # SQS triggers RSV Hub fetcher Lambda
+        self.rsv_hub_fetcher.add_event_source(
+            lambda_event_sources.SqsEventSource(
+                self.rsv_hub_queue,
+                batch_size=1,
+            )
+        )
 
         # Aggregator: Weekly on Wednesday at 12 PM UTC (after ingestion completes)
+        # Note: Aggregator is invoked directly (no SQS) since it depends on
+        # both fetchers completing first and has no external API dependency.
         self.aggregator_schedule = events.Rule(
             self,
             "AggregatorWeeklySchedule",
@@ -288,6 +344,20 @@ class ForecastProviderStack(Stack):
         if ops_topic:
             flusight_error_alarm.add_alarm_action(cw_actions.SnsAction(ops_topic))
             no_data_alarm.add_alarm_action(cw_actions.SnsAction(ops_topic))
+
+        # Alarm: Messages in forecast DLQ (fetcher failures exhausted retries)
+        forecast_dlq_alarm = cw.Alarm(
+            self,
+            "ForecastDLQAlarm",
+            metric=self.forecast_dlq.metric_approximate_number_of_messages_visible(),
+            threshold=1,
+            evaluation_periods=1,
+            alarm_description="Forecast provider DLQ has messages — FluSight or RSV Hub fetcher failed after 3 retries.",
+            comparison_operator=cw.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+            treat_missing_data=cw.TreatMissingData.NOT_BREACHING,
+        )
+        if ops_topic:
+            forecast_dlq_alarm.add_alarm_action(cw_actions.SnsAction(ops_topic))
 
         # --- CloudWatch Dashboard ---
         self.dashboard = cw.Dashboard(
