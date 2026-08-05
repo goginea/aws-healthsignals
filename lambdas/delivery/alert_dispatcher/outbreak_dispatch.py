@@ -12,7 +12,7 @@ import logging
 from datetime import datetime
 
 from boto3.dynamodb.conditions import Key
-from .handler import _markdown_to_html
+from handler import _markdown_to_html
 
 logger = logging.getLogger()
 

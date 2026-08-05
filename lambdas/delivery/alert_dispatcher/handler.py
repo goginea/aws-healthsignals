@@ -83,8 +83,9 @@ def _load_plugin_handlers() -> None:
         if not plugin_name:
             continue
         try:
-            # Import plugin module relative to this package directory
-            plugin_module = importlib.import_module(f".{plugin_name}", package=__package__)
+            # Import plugin module from the same directory
+            # Use importlib with the module name directly (Lambda flattens the package)
+            plugin_module = importlib.import_module(plugin_name)
             if hasattr(plugin_module, "register"):
                 handlers = plugin_module.register(context)
                 for alert_type, handler_fn in handlers.items():
