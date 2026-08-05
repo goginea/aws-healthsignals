@@ -52,17 +52,17 @@ Rural health departments (2,000+ counties, <50K population) lack resources for r
 │                                                                                 │
 │  ┌──────────────┐     ┌──────────────────┐     ┌──────────────────────────┐   │
 │  │  EventBridge │────▶│  SQS Queues      │────▶│  Lambda Ingestion Fleet  │   │
-│  │  Schedules   │     │  (core 3 + DLQ)  │     │  ┌────────┐ ┌────────┐  │   │
-│  │  ┌────────┐  │     └──────────────────┘     │  │Delphi  │ │CDC NWSS│  │   │
-│  │  │Weekly  │  │                              │  │Fetcher │ │Fetcher │  │   │
-│  │  │Mon 6AM │  │     EventBridge ──────────▶  │  └────────┘ └────────┘  │   │
-│  │  ├────────┤  │     (direct invoke)          │  ┌────────┐ ┌────────┐  │   │
-│  │  │Daily   │  │                              │  │CDC Resp│ │CDC RSS │  │   │
-│  │  │8AM UTC │  │     ┌──────────────────┐     │  │Fetcher │ │Fetcher │  │   │
-│  │  ├────────┤  │────▶│  SQS (shortage)  │────▶│  └────────┘ └────────┘  │   │
-│  │  │Weekly  │  │     └──────────────────┘     │  ┌────────┐ ┌────────┐  │   │
-│  │  │Wed 10AM│  │                              │  │openFDA │ │FluSight│  │   │
-│  │  └────────┘  │                              │  │Shortage│ │/RSVHub │  │   │
+│  │  Schedules   │     │  (per module     │     │  ┌────────┐ ┌────────┐  │   │
+│  │  ┌────────┐  │     │   + DLQ each)    │     │  │Delphi  │ │CDC NWSS│  │   │
+│  │  │Weekly  │  │     └──────────────────┘     │  │Fetcher │ │Fetcher │  │   │
+│  │  │Mon 6AM │  │                              │  └────────┘ └────────┘  │   │
+│  │  ├────────┤  │     All fetchers use SQS     │  ┌────────┐ ┌────────┐  │   │
+│  │  │Daily   │  │     for retry + DLQ:         │  │CDC Resp│ │CDC RSS │  │   │
+│  │  │8AM UTC │  │     • Core: 3 queues + DLQ   │  │Fetcher │ │Fetcher │  │   │
+│  │  ├────────┤  │     • CDC: 1 queue + DLQ     │  └────────┘ └────────┘  │   │
+│  │  │Weekly  │  │     • Shortage: 1 queue + DLQ│  ┌────────┐ ┌────────┐  │   │
+│  │  │Wed 10AM│  │     • Forecast: 2 queues     │  │openFDA │ │FluSight│  │   │
+│  │  └────────┘  │       + shared DLQ           │  │Shortage│ │/RSVHub │  │   │
 │  └──────────────┘                              │  └───┬────┘ └───┬────┘  │   │
 │                                                 └─────┼───────────┼───────┘   │
 │                                                       │           │            │

@@ -42,11 +42,12 @@ The system consists of a **core pipeline** for disease surveillance and **three 
 │                        PLUGIN: CDC OUTBREAK ALERTS                        │
 ├─────────────────────────────────────────────────────────────────────────┤
 │                                                                           │
-│  EventBridge (daily 8AM UTC) → CDC Outbreak Fetcher Lambda               │
+│  EventBridge (daily 8AM UTC) → SQS → CDC Outbreak Fetcher Lambda        │
 │    → Fetch RSS feed (tools.cdc.gov)                                      │
 │    → Detect new/updated outbreaks (DynamoDB state tracking)              │
 │    → Extract structured data via Bedrock (disease, states, cases)        │
 │    → Store to S3 + invoke Outbreak Processor                             │
+│    → Failure: SQS retries up to 3×, then → DLQ (14-day, alarmed)        │
 │                                                                           │
 │  Outbreak Processor Lambda                                               │
 │    → Normalize state names → map to monitored states                    │
@@ -87,9 +88,10 @@ The system consists of a **core pipeline** for disease surveillance and **three 
 ├─────────────────────────────────────────────────────────────────────────┤
 │                                                                           │
 │  EventBridge (weekly Wed):                                               │
-│    10AM → FluSight Forecast Fetcher Lambda                              │
-│    11AM → RSV Hub Forecast Fetcher Lambda                               │
-│    12PM → Forecast Aggregator Lambda                                    │
+│    10AM → SQS (flusight queue) → FluSight Forecast Fetcher Lambda       │
+│    11AM → SQS (rsvhub queue) → RSV Hub Forecast Fetcher Lambda          │
+│    12PM → Forecast Aggregator Lambda (direct, no external API)          │
+│    Failure: SQS retries up to 3×, then → shared forecast DLQ (alarmed) │
 │                                                                           │
 │  Custom Model Fetcher (on-demand invocation)                            │
 │                                                                           │
@@ -214,6 +216,8 @@ Surveillance data (metro signals, thresholds, peaks) changes weekly. Knowledge B
 
 ### Why SQS Between EventBridge and Lambdas?
 
+All ingestion Lambdas (core and plugins) use SQS for consistent retry, backpressure, and failure forensics:
+
 | Without SQS                         | With SQS                                     |
 | ----------------------------------- | -------------------------------------------- |
 | EventBridge directly invokes Lambda | EventBridge sends to SQS, SQS invokes Lambda |
@@ -221,6 +225,13 @@ Surveillance data (metro signals, thresholds, peaks) changes weekly. Knowledge B
 | No backpressure                     | Queue absorbs spikes                         |
 | No failure forensics                | DLQ retains failed messages 14 days          |
 | One failure blocks all              | Each source independent                      |
+
+Each module has its own queue(s) and DLQ for independent operational visibility:
+
+- **Core**: 3 queues (delphi, wastewater, respiratory) + 1 shared DLQ
+- **CDC Outbreaks**: 1 queue + 1 DLQ
+- **Drug Shortage**: 1 queue + 1 DLQ
+- **Forecast Providers**: 2 queues (flusight, rsvhub) + 1 shared DLQ
 
 ### Why a Pipeline Coordinator (Not Direct S3→Step Functions)?
 
@@ -327,7 +338,8 @@ Monday 6:25 AM:
 
 ```
 Daily 8 AM UTC:
-  EventBridge → CDC Outbreak Fetcher Lambda (direct, no SQS)
+  EventBridge → SQS (healthsignals-ingest-cdc-outbreaks) → CDC Outbreak Fetcher Lambda
+  Failure: SQS retries 3×, then → DLQ (healthsignals-cdc-outbreak-dlq, alarmed)
 
   CDC Outbreak Fetcher:
     1. Fetch RSS feed from tools.cdc.gov
