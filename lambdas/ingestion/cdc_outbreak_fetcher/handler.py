@@ -346,6 +346,8 @@ Return ONLY a valid JSON object with these fields:
 {
   "disease_name": "string — the disease or pathogen name (e.g., Cyclosporiasis, Salmonella, E. coli)",
   "affected_states": ["array of US state names mentioned as having cases"],
+  "affected_states_count": number or null — total number of states affected if stated (e.g., "distributed in 27 states" → 27),
+  "nationwide": true/false — set to true if the outbreak is described as nationwide, multi-state without specific states listed, or affecting more than 10 states,
   "case_count": number or null if not stated,
   "hospitalizations": number or null if not stated,
   "deaths": number or null if not stated,
@@ -359,9 +361,10 @@ Rules:
 - Extract ONLY information explicitly stated in the content
 - Use full state names (e.g., "Michigan" not "MI")
 - If case count says "more than X", use X as the number
-- If no states are mentioned, return an empty array
+- For affected_states: list any specific state names mentioned. If the page says "X states" without naming them, return an empty array but set affected_states_count to X
+- Set nationwide to true if the text mentions distribution across many states (10+) even without naming them, or uses words like "nationwide", "multi-state", or "across the country"
 - If a field is not mentioned, use null
-- Do NOT hallucinate or infer information not present in the text
+- Do NOT hallucinate or infer state names not present in the text
 
 CDC Page Content:
 """

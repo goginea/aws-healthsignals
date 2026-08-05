@@ -142,8 +142,13 @@ class TestOutbreakProcessing:
         assert result["alerts_started"] == 0
         handler.sfn_client.start_execution.assert_not_called()
 
-    def test_no_affected_states_returns_early(self, handler):
-        """Empty affected_states returns immediately."""
+    def test_no_affected_states_falls_back_to_monitored(self, handler):
+        """Empty affected_states falls back to alerting all monitored states."""
+        handler.sfn_client = MagicMock()
+        handler.sfn_client.start_execution.return_value = {
+            "executionArn": "arn:aws:states:us-east-1:123:execution:test:outbreak-all-123"
+        }
+
         event = {
             "outbreak_id": "test-empty",
             "title": "Empty Outbreak",
@@ -153,8 +158,10 @@ class TestOutbreakProcessing:
 
         result = handler.lambda_handler(event, None)
 
-        assert result["alerts_started"] == 0
-        assert result["reason"] == "no_affected_states"
+        # Should fall back to all monitored states (texas, ohio from fixture)
+        assert result["alerts_started"] == 2
+        assert "texas" in result["affected_states"]
+        assert "ohio" in result["affected_states"]
 
     def test_new_states_identified_on_update(self, handler):
         """Update events correctly identify newly added states."""

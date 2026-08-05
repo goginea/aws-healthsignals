@@ -77,9 +77,20 @@ def lambda_handler(event: dict, context: Any) -> dict:
     affected_states_raw = event.get("affected_states", [])
     previous_states_raw = event.get("previous_states", [])
 
+    # If Bedrock couldn't extract specific state names (e.g., CDC page says
+    # "distributed in 27 states" without listing them), fall back to alerting
+    # all monitored states. A multi-state outbreak with unknown geography is
+    # still actionable for every subscribed health department.
     if not affected_states_raw:
-        logger.warning(f"No affected states for outbreak: {title}")
-        return {"statusCode": 200, "alerts_started": 0, "reason": "no_affected_states"}
+        monitored = list_active_states()
+        if not monitored:
+            logger.warning(f"No affected states and no monitored states for outbreak: {title}")
+            return {"statusCode": 200, "alerts_started": 0, "reason": "no_affected_states"}
+        logger.info(
+            f"No specific states extracted for '{title}' — "
+            f"falling back to all {len(monitored)} monitored states"
+        )
+        affected_states_raw = [s["state_key"] for s in monitored]
 
     # 1. Normalize state names
     affected_states = normalize_state_names(affected_states_raw)
