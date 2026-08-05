@@ -187,6 +187,13 @@ class CDCOutbreakAlertsStack(Stack):
                 resources=[f"arn:aws:s3:::{bucket_name}/config/*"],
             )
         )
+        self.outbreak_processor.add_to_role_policy(
+            iam.PolicyStatement(
+                actions=["s3:ListBucket"],
+                resources=[f"arn:aws:s3:::{bucket_name}"],
+                conditions={"StringLike": {"s3:prefix": ["config/*"]}},
+            )
+        )
 
         # Step Functions start execution
         self.outbreak_processor.add_to_role_policy(
