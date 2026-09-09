@@ -664,7 +664,10 @@ def invoke_step_functions(record: dict, week_timestamp: str) -> str | None:
         "therapeutic_category": record.get("therapeutic_category", ""),
         "supply_status": record.get("supply_status", "UNKNOWN"),
         "reason_for_shortage": record.get("reason_for_shortage", "Unknown"),
-        "estimated_resolution_date": record.get("estimated_resolution_date"),
+        # Always a string so the Step Functions States.Format reference resolves
+        # (the state machine reads $.estimated_resolution_date directly).
+        "estimated_resolution_date": record.get("estimated_resolution_date")
+        or "No estimated resolution date provided by FDA",
         "shortage_status": record.get("shortage_status"),
         "previous_supply_status": record.get("previous_supply_status"),
         "week_timestamp": week_timestamp,

@@ -30,7 +30,7 @@
           "messages": [
             {
               "role": "user",
-              "content.$": "States.Format('Generate a shortage situation brief for the following drug shortage data. Therapeutic category: {}. Week: {}. Affected products: {}', $.therapeutic_category, $.week_timestamp, States.JsonToString($.affected_products))"
+              "content.$": "States.Format('Generate a shortage situation brief for the following drug shortage data. Therapeutic category: {}. Week: {}. Affected product: {} (NDC {}). Supply status: {} ({}). Reason for shortage: {}. Estimated resolution date: {}.', $.therapeutic_category, $.week_timestamp, $.product_name, $.product_id, $.supply_status, $.shortage_status, $.reason_for_shortage, $.estimated_resolution_date)"
             }
           ],
           "thinking": {
