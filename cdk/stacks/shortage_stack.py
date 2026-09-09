@@ -68,8 +68,14 @@ class ShortageStack(Stack):
         self.bedrock_role.add_to_policy(
             iam.PolicyStatement(
                 actions=["bedrock:InvokeModel"],
+                # The model id (us.anthropic.claude-sonnet-4-5-...) is a
+                # cross-region inference profile: it resolves to an
+                # inference-profile ARN and fans out to foundation-model ARNs in
+                # multiple regions, so both resource forms (any region) are
+                # required. Matches the CDC Outbreak stack's working grant.
                 resources=[
-                    f"arn:aws:bedrock:{self.region}::foundation-model/us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+                    "arn:aws:bedrock:*::foundation-model/anthropic.*",
+                    f"arn:aws:bedrock:*:{self.account}:inference-profile/*",
                 ],
             )
         )
