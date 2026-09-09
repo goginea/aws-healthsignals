@@ -231,7 +231,7 @@ def seed_calibration(num_seasons: int, region: str, dry_run: bool = False):
                             "lag_weeks": Decimal(str(max(0, lag))),
                             "metro_peak_value": Decimal(str(round(peak["value"], 2))),
                             "county_peak_value": Decimal(str(round(county_peak["value"], 2))),
-                            "severity_ratio": Decimal(str(max(0.1, severity_ratio))),
+                            "severity_multiplier": Decimal(str(max(0.1, severity_ratio))),
                             "season": season_name,
                             "calibrated_at": datetime.now(timezone.utc).isoformat(),
                         }

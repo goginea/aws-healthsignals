@@ -147,22 +147,22 @@ class PredictionStack(Stack):
                 )
             )
 
-        # Grant S3 read for config access
-        self.leader_detection.add_to_role_policy(
-            iam.PolicyStatement(
-                actions=["s3:GetObject"],
-                resources=[f"arn:aws:s3:::healthsignals-data-{self.account}-{self.region}/config/*"],
+        # Grant S3 read for config access.
+        # GetObject on config/* covers reading individual config files; ListBucket
+        # (scoped to the config/ prefix) is required by config_loader's
+        # list_objects_v2 call used to enumerate active states/diseases.
+        _data_bucket_arn = f"arn:aws:s3:::healthsignals-data-{self.account}-{self.region}"
+        for _fn in (self.leader_detection, self.geographic_affinity, self.timing_estimation):
+            _fn.add_to_role_policy(
+                iam.PolicyStatement(
+                    actions=["s3:GetObject"],
+                    resources=[f"{_data_bucket_arn}/config/*"],
+                )
             )
-        )
-        self.geographic_affinity.add_to_role_policy(
-            iam.PolicyStatement(
-                actions=["s3:GetObject"],
-                resources=[f"arn:aws:s3:::healthsignals-data-{self.account}-{self.region}/config/*"],
+            _fn.add_to_role_policy(
+                iam.PolicyStatement(
+                    actions=["s3:ListBucket"],
+                    resources=[_data_bucket_arn],
+                    conditions={"StringLike": {"s3:prefix": ["config/*"]}},
+                )
             )
-        )
-        self.timing_estimation.add_to_role_policy(
-            iam.PolicyStatement(
-                actions=["s3:GetObject"],
-                resources=[f"arn:aws:s3:::healthsignals-data-{self.account}-{self.region}/config/*"],
-            )
-        )

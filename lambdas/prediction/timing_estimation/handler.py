@@ -165,16 +165,25 @@ def lambda_handler(event: dict, context: Any) -> dict:
 
 
 def get_calibration_data(county_fips: str, leader_msa: str, disease: str) -> list:
-    """Retrieve historical lag data from DynamoDB calibration table."""
+    """Retrieve historical lag data from DynamoDB calibration table.
+
+    Calibration records use a composite sort key ``disease_season`` of the form
+    ``{disease}_{season}`` (e.g. ``influenza_2023-24``) written by
+    scripts/seed_calibration_data.py, with the leader metro stored in the
+    ``metro_msa_code`` attribute. We therefore query by the ``{disease}_``
+    prefix and filter the results to the requested leader metro.
+    """
     try:
         response = calibration_table.query(
             KeyConditionExpression="county_fips = :fips AND begins_with(disease_season, :prefix)",
             ExpressionAttributeValues={
                 ":fips": county_fips,
-                ":prefix": f"{disease}_{leader_msa}_",
+                ":prefix": f"{disease}_",
             },
         )
-        return response.get("Items", [])
+        items = response.get("Items", [])
+        # Only use calibration for the metro that led this detection.
+        return [i for i in items if i.get("metro_msa_code") == leader_msa]
     except Exception as e:
         logger.error(f"Calibration lookup failed for {county_fips}: {e}")
         return []
