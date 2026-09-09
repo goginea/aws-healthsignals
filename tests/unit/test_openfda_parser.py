@@ -2,6 +2,13 @@
 
 Tests the parse_openfda_response(), infer_therapeutic_category(),
 get_current_epiweek(), and _map_supply_status() functions.
+
+Field mappings reflect the live openFDA Drug Shortages schema:
+    - identifier: package_ndc (or openfda.product_ndc[0])
+    - name: generic_name (or openfda.brand_name[0])
+    - supply: availability + status
+    - reason: shortage_reason
+    - category: record's therapeutic_category list, else name-based inference
 """
 import re
 import pytest
@@ -93,12 +100,14 @@ class TestParseValidResponse:
         raw_response = {
             "results": [
                 {
-                    "product_id": "ABC-123",
-                    "productName": "Oseltamivir Capsules, 75mg",
-                    "genericName": "Oseltamivir Phosphate",
-                    "currentSupplyStatus": "Available",
-                    "reason": "Increased demand",
-                    "estimatedResolutionDate": "2024-06-01",
+                    "package_ndc": "ABC-123",
+                    "generic_name": "Oseltamivir Capsules, 75mg",
+                    "availability": "Available",
+                    "status": "Current",
+                    "shortage_reason": "Increased demand",
+                    # openFDA's broad clinical category is ignored in favour of
+                    # name-based inference into the config's category_key taxonomy.
+                    "therapeutic_category": ["Antivirals"],
                 }
             ]
         }
@@ -111,20 +120,18 @@ class TestParseValidResponse:
         assert record["product_name"] == "Oseltamivir Capsules, 75mg"
         assert record["supply_status"] == "AVAILABLE"
         assert record["reason_for_shortage"] == "Increased demand"
-        assert record["estimated_resolution_date"] == "2024-06-01"
+        # inferred from the product name -> config category_key
         assert record["therapeutic_category"] == "antivirals"
         assert record["week_timestamp"] == DETERMINISTIC_EPIWEEK
 
-    def test_fallback_to_generic_name(self, therapeutic_config):
-        """When productName is missing but genericName is present, parser
-        uses genericName as product_name."""
+    def test_identifier_falls_back_to_product_ndc(self, therapeutic_config):
+        """When package_ndc is missing, the openfda.product_ndc[0] is used."""
         raw_response = {
             "results": [
                 {
-                    "product_id": "DEF-456",
-                    "genericName": "Amoxicillin",
-                    "currentSupplyStatus": "Discontinued",
-                    "reason": "Manufacturing delay",
+                    "generic_name": "Amoxicillin",
+                    "availability": "Unavailable",
+                    "openfda": {"product_ndc": ["64253-400", "64253-401"]},
                 }
             ]
         }
@@ -132,20 +139,55 @@ class TestParseValidResponse:
         records = parse_openfda_response(raw_response, therapeutic_config)
 
         assert len(records) == 1
-        assert records[0]["product_name"] == "Amoxicillin"
+        assert records[0]["product_id"] == "64253-400"
+
+    def test_name_falls_back_to_openfda_brand(self, therapeutic_config):
+        """When top-level generic_name is missing, openfda brand/generic is used."""
+        raw_response = {
+            "results": [
+                {
+                    "package_ndc": "DEF-456",
+                    "availability": "Available",
+                    "openfda": {"brand_name": ["Amoxil"], "generic_name": ["Amoxicillin"]},
+                }
+            ]
+        }
+
+        records = parse_openfda_response(raw_response, therapeutic_config)
+
+        assert len(records) == 1
+        assert records[0]["product_name"] == "Amoxil"
+
+    def test_category_inferred_when_absent(self, therapeutic_config):
+        """When the record has no therapeutic_category, it is inferred from name."""
+        raw_response = {
+            "results": [
+                {
+                    "package_ndc": "DEF-456",
+                    "generic_name": "Amoxicillin Tablets 500mg",
+                    "availability": "Discontinued",
+                    "shortage_reason": "Manufacturing delay",
+                }
+            ]
+        }
+
+        records = parse_openfda_response(raw_response, therapeutic_config)
+
+        assert len(records) == 1
+        assert records[0]["product_name"] == "Amoxicillin Tablets 500mg"
         assert records[0]["therapeutic_category"] == "antibiotics"
 
 
 class TestSkipInvalidRecords:
     """Test records skipped when missing required fields."""
 
-    def test_skip_record_missing_product_id(self, therapeutic_config, caplog):
-        """Records without product_id are skipped with no error raised."""
+    def test_skip_record_missing_identifier(self, therapeutic_config, caplog):
+        """Records without any NDC identifier are skipped with no error raised."""
         raw_response = {
             "results": [
                 {
-                    "productName": "Some Drug",
-                    "currentSupplyStatus": "Available",
+                    "generic_name": "Some Drug",
+                    "availability": "Available",
                 }
             ]
         }
@@ -154,14 +196,14 @@ class TestSkipInvalidRecords:
 
         assert len(records) == 0
 
-    def test_skip_record_missing_both_names(self, therapeutic_config, caplog):
-        """Records without productName AND genericName are skipped."""
+    def test_skip_record_missing_name(self, therapeutic_config, caplog):
+        """Records with an identifier but no resolvable name are skipped."""
         raw_response = {
             "results": [
                 {
-                    "product_id": "GHI-789",
-                    "currentSupplyStatus": "Available",
-                    "reason": "Unknown",
+                    "package_ndc": "GHI-789",
+                    "availability": "Available",
+                    "shortage_reason": "Unknown",
                 }
             ]
         }
@@ -175,22 +217,34 @@ class TestSkipInvalidRecords:
 
 
 class TestSupplyStatusMapping:
-    """Test mapping of openFDA supply status values."""
+    """Test mapping of openFDA availability/status values."""
 
     def test_available_maps_to_available(self):
-        """'Available' maps to 'AVAILABLE'."""
+        """'Available' availability maps to 'AVAILABLE'."""
         assert _map_supply_status("Available") == "AVAILABLE"
 
-    def test_discontinued_maps_to_discontinued(self):
-        """'Discontinued' maps to 'DISCONTINUED'."""
-        assert _map_supply_status("Discontinued") == "DISCONTINUED"
+    def test_unavailable_maps_to_discontinued(self):
+        """'Unavailable' availability maps to 'DISCONTINUED'."""
+        assert _map_supply_status("Unavailable") == "DISCONTINUED"
+
+    def test_limited_availability_maps_to_discontinued(self):
+        """'Limited Availability' maps to 'DISCONTINUED' (constrained supply)."""
+        assert _map_supply_status("Limited Availability") == "DISCONTINUED"
+
+    def test_status_discontinuation_takes_precedence(self):
+        """A 'To Be Discontinued' status maps to 'DISCONTINUED'."""
+        assert _map_supply_status("Available", "To Be Discontinued") == "DISCONTINUED"
+
+    def test_current_status_without_availability_maps_available(self):
+        """No availability but status 'Current' resolves to 'AVAILABLE'."""
+        assert _map_supply_status(None, "Current") == "AVAILABLE"
 
     def test_none_maps_to_unknown(self):
-        """None maps to 'UNKNOWN'."""
+        """None availability and status maps to 'UNKNOWN'."""
         assert _map_supply_status(None) == "UNKNOWN"
 
     def test_empty_string_maps_to_unknown(self):
-        """Empty string maps to 'UNKNOWN'."""
+        """Empty availability maps to 'UNKNOWN'."""
         assert _map_supply_status("") == "UNKNOWN"
 
 
@@ -237,13 +291,13 @@ class TestEdgeCases:
         assert records == []
 
     def test_reason_defaults_to_unknown(self, therapeutic_config):
-        """Missing reason field defaults to 'Unknown'."""
+        """Missing shortage_reason field defaults to 'Unknown'."""
         raw_response = {
             "results": [
                 {
-                    "product_id": "JKL-101",
-                    "productName": "Tamiflu Oral Suspension",
-                    "currentSupplyStatus": "Discontinued",
+                    "package_ndc": "JKL-101",
+                    "generic_name": "Tamiflu Oral Suspension",
+                    "availability": "Unavailable",
                 }
             ]
         }
@@ -254,33 +308,14 @@ class TestEdgeCases:
         assert records[0]["reason_for_shortage"] == "Unknown"
 
     def test_estimated_resolution_date_nullable(self, therapeutic_config):
-        """Null/missing estimated_resolution_date is preserved as None."""
+        """Missing estimated_resolution_date is preserved as None."""
         raw_response = {
             "results": [
                 {
-                    "product_id": "MNO-202",
-                    "productName": "Azithromycin Tablets, 250mg",
-                    "currentSupplyStatus": "Available",
-                    "reason": "Demand increase",
-                }
-            ]
-        }
-
-        records = parse_openfda_response(raw_response, therapeutic_config)
-
-        assert len(records) == 1
-        assert records[0]["estimated_resolution_date"] is None
-
-    def test_estimated_resolution_date_explicit_none(self, therapeutic_config):
-        """Explicitly null estimatedResolutionDate is preserved as None."""
-        raw_response = {
-            "results": [
-                {
-                    "product_id": "PQR-303",
-                    "productName": "Penicillin V Potassium",
-                    "currentSupplyStatus": "Available",
-                    "reason": "Supply disruption",
-                    "estimatedResolutionDate": None,
+                    "package_ndc": "MNO-202",
+                    "generic_name": "Azithromycin Tablets, 250mg",
+                    "availability": "Available",
+                    "shortage_reason": "Demand increase",
                 }
             ]
         }
