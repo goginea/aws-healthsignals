@@ -14,6 +14,7 @@ module names relative to this package, e.g., "shortage_dispatch").
 """
 import json
 import os
+import re
 import sys
 import logging
 import importlib
@@ -169,21 +170,77 @@ def _extract_alert_content(event: dict) -> dict:
     # Common patterns from the CommunicationDrafting prompt output:
     # "# OUTPUT 1: EMAIL BRIEF" ... "# OUTPUT 2: SMS ALERT"
     # or "## EMAIL" ... "## SMS"
-    sms_markers = ["# OUTPUT 2: SMS", "## SMS ALERT", "## OUTPUT 2:", "# SMS ALERT", "---\n**SMS"]
+    # Order matters: match the fuller heading first so we split at the start of
+    # the OUTPUT-2 heading line rather than mid-word (e.g. splitting inside
+    # "SMS ALERT" and leaving " ALERT" as the message).
+    sms_markers = ["## OUTPUT 2:", "# OUTPUT 2:", "## SMS ALERT", "# SMS ALERT", "---\n**SMS"]
     for marker in sms_markers:
         if marker in full_text:
             parts = full_text.split(marker, 1)
             email_body = parts[0].strip()
             sms_text = parts[1].strip()
-            # Clean up SMS — extract just the message content (strip markdown headers)
-            sms_lines = [l for l in sms_text.split("\n") if l.strip() and not l.startswith("#")]
+            # Clean up SMS — extract just the message content. Skip markdown
+            # headers and any leftover label line (e.g. "SMS ALERT" that trailed
+            # the "OUTPUT 2:" heading we split on).
+            _sms_label_re = re.compile(r"^[#*\s]*sms(\s*alert)?[\s:*_-]*$", re.IGNORECASE)
+            sms_lines = [
+                l for l in sms_text.split("\n")
+                if l.strip() and not l.startswith("#") and not _sms_label_re.match(l.strip())
+            ]
             sms_text = sms_lines[0] if sms_lines else sms_text[:160]
             break
+
+    # The communication-drafting prompt emits both outputs in one response under
+    # "OUTPUT 1: EMAIL BRIEF" / "OUTPUT 2: SMS ALERT" headings so we can split
+    # them. That "OUTPUT 1"/"EMAIL BRIEF" scaffolding is an internal label — it
+    # should never appear in the delivered email, so strip it from the top.
+    email_body = _strip_output_label(email_body)
 
     # Trim SMS to 160 chars
     sms_text = sms_text[:160]
 
     return {"email_body": email_body, "sms_text": sms_text}
+
+
+def _strip_output_label(email_body: str) -> str:
+    """Remove a leading 'OUTPUT 1 / EMAIL BRIEF' scaffolding header from the email.
+
+    The dual-output communication-drafting prompt prefixes the email with a
+    label like '# OUTPUT 1: EMAIL BRIEF'. Drop leading lines that are only that
+    label (with optional markdown '#' and word-count parenthetical) so the
+    delivered email starts at the real content.
+    """
+    import re
+
+    # Matches ONLY the scaffolding label, e.g.:
+    #   "# OUTPUT 1: EMAIL BRIEF", "OUTPUT 1 - EMAIL BRIEF (500-800 words)",
+    #   "## EMAIL BRIEF", "**EMAIL BRIEF**"
+    # Deliberately narrow so it never eats real body prose that merely begins
+    # with the word "Email".
+    label_re = re.compile(
+        r"^[#*\s]*"                       # optional markdown/bold/space
+        r"(output\s*1\s*[:\-.]?\s*)?"     # optional "OUTPUT 1:" prefix
+        r"email\s*brief"                  # the label itself
+        r"[\s:*_]*"                       # trailing markdown/punctuation
+        r"(\([^)]*\))?"                   # optional "(500-800 words)"
+        r"[\s:*_]*$",                     # to end of line
+        re.IGNORECASE,
+    )
+    # Also strip a bare "# OUTPUT 1:" line with no "email brief" text.
+    output1_re = re.compile(r"^[#*\s]*output\s*1\s*[:\-.]?\s*$", re.IGNORECASE)
+
+    lines = email_body.split("\n")
+    idx = 0
+    while idx < len(lines):
+        stripped = lines[idx].strip()
+        if stripped == "":
+            idx += 1
+            continue
+        if label_re.match(stripped) or output1_re.match(stripped):
+            idx += 1
+            continue
+        break
+    return "\n".join(lines[idx:]).strip()
 
 
 def _extract_severity(event: dict) -> str:

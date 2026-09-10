@@ -244,3 +244,43 @@ class TestFullHandler:
 
         assert result["total_errors"] == 1
         assert result["total_dispatched"] == 0
+
+
+class TestOutputLabelStripping:
+    """The 'OUTPUT 1: EMAIL BRIEF' scaffolding must not leak into the email."""
+
+    FULL_DRAFT = (
+        "# OUTPUT 1: EMAIL BRIEF (500-800 words)\n\n"
+        "Dear Colleagues,\n\nInfluenza activity is rising in the Houston metro.\n\n"
+        "# OUTPUT 2: SMS ALERT\n\nHealthSignals: flu rising, prepare now."
+    )
+
+    def test_email_body_has_no_output_label(self, handler):
+        result = handler._extract_alert_content({
+            "communication_result": {"Body": {"content": [{"text": self.FULL_DRAFT}]}},
+        })
+        body = result["email_body"]
+        assert "OUTPUT 1" not in body
+        assert "EMAIL BRIEF" not in body
+        assert body.startswith("Dear Colleagues")
+        # SMS still extracted correctly
+        assert "HealthSignals" in result["sms_text"]
+        assert "OUTPUT 2" not in result["sms_text"]
+
+    def test_strip_variants(self, handler):
+        f = handler._strip_output_label
+        assert f("## EMAIL BRIEF\nHello").startswith("Hello")
+        assert f("OUTPUT 1 - EMAIL BRIEF (500-800 words)\nBody").startswith("Body")
+        assert f("**EMAIL BRIEF**\nHi").startswith("Hi")
+
+    def test_does_not_strip_real_prose(self, handler):
+        # A body line that merely begins with 'Email' must survive.
+        text = "Email your local providers about the outbreak."
+        assert handler._strip_output_label(text) == text
+
+    def test_prestructured_alert_content_untouched(self, handler):
+        # When alert_content.email_body is already provided, no re-parsing.
+        result = handler._extract_alert_content({
+            "alert_content": {"email_body": "Already clean body.", "sms_text": "sms"},
+        })
+        assert result["email_body"] == "Already clean body."
