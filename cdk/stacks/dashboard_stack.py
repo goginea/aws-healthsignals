@@ -17,13 +17,17 @@ from aws_cdk import (
     Duration,
     RemovalPolicy,
     CfnOutput,
+    CustomResource,
     aws_s3 as s3,
+    aws_s3_deployment as s3deploy,
     aws_lambda as _lambda,
     aws_apigateway as apigw,
     aws_iam as iam,
     aws_cognito as cognito,
     aws_cloudfront as cloudfront,
     aws_cloudfront_origins as origins,
+    aws_secretsmanager as secretsmanager,
+    custom_resources as cr,
 )
 from constructs import Construct
 
@@ -101,12 +105,18 @@ class DashboardStack(Stack):
         )
 
         # --- Initial admin user (created at deploy when an email is provided) ---
+        self.admin_user = None
         if admin_email:
-            cognito.CfnUserPoolUser(
+            self.admin_user = cognito.CfnUserPoolUser(
                 self,
                 "InitialAdminUser",
                 user_pool_id=self.user_pool.user_pool_id,
                 username=admin_email,
+                # Keep this resource stable: DesiredDeliveryMediums is immutable
+                # on a custom-named Cognito user, so changing/removing it forces
+                # a replace that CloudFormation rejects. The temp-password email
+                # is irrelevant — SetAdminPassword (below) sets a permanent
+                # password from Secrets Manager for reliable first login.
                 desired_delivery_mediums=["EMAIL"],
                 user_attributes=[
                     {"name": "email", "value": admin_email},
@@ -199,6 +209,89 @@ class DashboardStack(Stack):
         # /drift/{stack}
         drift = self.api.root.add_resource("drift")
         drift.add_resource("{stack}").add_method("POST", integ, **auth_method_opts)
+
+        # --- Frontend: upload the site + generated config.js, invalidate CF ---
+        # config.js is generated here so the deployed site is fully wired (API
+        # URL, region, Cognito client id) with NO manual step. It overwrites the
+        # committed placeholder config.js (which is excluded from the asset).
+        config_js = (
+            "window.DASHBOARD_CONFIG = {\n"
+            f'  apiUrl: "{self.api.url}",\n'
+            f'  region: "{self.region}",\n'
+            f'  userPoolClientId: "{self.user_pool_client.user_pool_client_id}"\n'
+            "};\n"
+        )
+        s3deploy.BucketDeployment(
+            self,
+            "DashboardSiteDeployment",
+            sources=[
+                s3deploy.Source.asset("../web/dashboard", exclude=["config.js"]),
+                s3deploy.Source.data("config.js", config_js),
+            ],
+            destination_bucket=self.site_bucket,
+            distribution=self.distribution,
+            distribution_paths=["/*"],  # auto CloudFront invalidation on deploy
+            prune=True,
+        )
+
+        # --- Admin bootstrap: generate a password + set it permanent ---
+        # Cognito's default temp-password email is unreliable without SES, so we
+        # generate a strong password into Secrets Manager and set it PERMANENT
+        # via a small custom-resource Lambda that reads the secret AT RUNTIME
+        # and calls AdminSetUserPassword. Reading the secret in the Lambda (not
+        # via a CloudFormation {{resolve:secretsmanager:...}} reference) keeps
+        # the stored value and the set value identical for a plain-string secret.
+        # The admin retrieves the initial password from the secret and can
+        # change it after first login. Only runs when an admin_email is given.
+        if admin_email:
+            self.admin_secret = secretsmanager.Secret(
+                self,
+                "DashboardAdminPassword",
+                secret_name="healthsignals/dashboard-admin-password",
+                description=f"Initial dashboard admin password for {admin_email}",
+                generate_secret_string=secretsmanager.SecretStringGenerator(
+                    password_length=20,
+                    exclude_punctuation=False,
+                    require_each_included_type=True,
+                ),
+            )
+
+            bootstrap_fn = _lambda.Function(
+                self,
+                "AdminBootstrapFunction",
+                function_name="healthsignals-dashboard-admin-bootstrap",
+                runtime=_lambda.Runtime.PYTHON_3_11,
+                handler="handler.handler",
+                code=_lambda.Code.from_asset("../lambdas/dashboard/admin_bootstrap"),
+                timeout=Duration.minutes(2),
+            )
+            self.admin_secret.grant_read(bootstrap_fn)
+            bootstrap_fn.add_to_role_policy(
+                iam.PolicyStatement(
+                    actions=["cognito-idp:AdminSetUserPassword"],
+                    resources=[self.user_pool.user_pool_arn],
+                )
+            )
+
+            provider = cr.Provider(self, "AdminBootstrapProvider", on_event_handler=bootstrap_fn)
+            set_pw = CustomResource(
+                self,
+                "SetAdminPassword",
+                service_token=provider.service_token,
+                properties={
+                    "UserPoolId": self.user_pool.user_pool_id,
+                    "Username": admin_email,
+                    "SecretArn": self.admin_secret.secret_arn,
+                    # Change this to force re-run if the secret is rotated.
+                    "SecretVersion": self.admin_secret.secret_arn,
+                },
+            )
+            set_pw.node.add_dependency(self.admin_secret)
+            if self.admin_user is not None:
+                set_pw.node.add_dependency(self.admin_user)
+            CfnOutput(self, "DashboardAdminEmail", value=admin_email)
+            CfnOutput(self, "DashboardAdminPasswordSecret",
+                      value=self.admin_secret.secret_name)
 
         # --- Outputs (used to wire the frontend config at deploy time) ---
         CfnOutput(self, "DashboardUrl", value=cf_origin)

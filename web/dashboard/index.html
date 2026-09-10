@@ -90,14 +90,9 @@
   <footer class="text-center text-xs text-slate-400 py-8">HealthSignals admin dashboard · read-only · Cognito-protected</footer>
 </div>
 
-<!-- Frontend config is injected at deploy time (replaces these placeholders). -->
-<script>
-window.DASHBOARD_CONFIG = {
-  apiUrl: "__API_URL__",
-  region: "__REGION__",
-  userPoolClientId: "__USER_POOL_CLIENT_ID__"
-};
-</script>
+<!-- Frontend config (config.js) is generated and uploaded by the CDK
+     BucketDeployment at deploy time; the committed file holds empty defaults. -->
+<script src="config.js"></script>
 <script src="static-sections.js"></script>
 <script src="app.js"></script>
 </body>
