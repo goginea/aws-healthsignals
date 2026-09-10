@@ -327,16 +327,28 @@ Open the `DashboardUrl` value in a browser and sign in with your admin email and
 
 ## Adding a New State After Deployment
 
-No code changes needed — config only:
+No code changes and no new config files needed — one per-state file only:
 
 ```bash
 cp config/states/_template.json config/states/florida.json
-# Edit florida.json with metros + counties
+# Edit florida.json (see the required fields below)
 aws s3 cp config/states/florida.json s3://${BUCKET}/config/states/florida.json
 python scripts/seed_calibration_data.py --state florida --seasons 3
 ```
 
-The system auto-discovers new states on the next execution.
+The system auto-discovers active states by listing the `config/states/` prefix on the next execution — no redeploy required.
+
+### Required fields when editing the state file
+
+The template ships with placeholders; three fields are load-bearing and easy to miss:
+
+- **`enabled`** — the template ships `"enabled": false`. You **must** set it to `true`, or `list_active_states()` silently skips the file and nothing happens.
+- **`cdc_geography_name`** — must match the CDC NSSP `geography` string for the state **exactly** (e.g. `"Florida"`). This is the key used to fetch the state-level surveillance feed, and it is the **reliable floor** for the county → HSA → state fallback that supplies per-county alert context. A typo here means rural counties with no CDC data of their own get no surveillance context at all.
+- **`sentinel_metros[].county_fips` and `subscribing_counties[].county_fips`** — use real 5-digit FIPS. These lists don't just drive delivery; they now also select which counties are pulled from the county-level NSSP feed (`rdmq-nq56`). A county not listed here (or with a bad FIPS) gets no measured county signal and no county→HSA map, which disables its HSA-level fallback (it can still reach the state floor).
+
+You do **not** need to create any county, NSSP, or HSA config file. County selection is derived from the state file above, `config/data_sources/cdc_nssp_county.json` is a global file already deployed, and county→HSA mappings self-populate from the CDC feed at ingestion time.
+
+> **Cache note:** "auto-discovers on next execution" applies once warm Lambdas pick up the new config. The config loader caches per instance, so a very recently warmed Lambda may serve stale config briefly — see the cache-bust guidance in [Troubleshooting](#troubleshooting) if a new state doesn't appear on the next run.
 
 ---
 
