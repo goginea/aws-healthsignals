@@ -336,3 +336,100 @@ class TestBriefExtraction:
         body_text = sent["Message"]["Body"]["Text"]["Data"]
         assert "ANTIVIRAL SHORTAGE SITUATION BRIEF" in body_text
         assert "Oseltamivir shortage this week." in body_text
+
+
+class TestResolvedNotification:
+    """shortage_resolved alerts reuse the category-based dispatch with a Resolved subject."""
+
+    def test_resolved_registered(self, shortage_module):
+        ctx = {
+            "sub_table": shortage_module._test_mocks["sub_table"],
+            "ses": shortage_module._test_mocks["ses"],
+            "sns": shortage_module._test_mocks["sns"],
+            "system": mock_system_config,
+            "api_base_url": "https://api.test.com",
+            "dynamodb": MagicMock(),
+        }
+        handlers = shortage_module.register(ctx)
+        assert "shortage_resolved" in handlers
+        assert "shortage_digest" in handlers
+
+    def test_resolved_subject_line(self, shortage_module):
+        assert "Resolved" in shortage_module._shortage_subject("shortage_resolved", "Antivirals")
+        assert "Weekly" in shortage_module._shortage_subject("shortage_digest", "2026-W37")
+        assert "Alert" in shortage_module._shortage_subject("shortage", "Antivirals")
+
+    def test_resolved_dispatches_with_brief_body(self, shortage_module):
+        sub = _make_shortage_subscriber()
+        mocks = shortage_module._test_mocks
+        mocks["sub_table"].query.return_value = {"Items": [sub]}
+        mocks["ses"].reset_mock()
+
+        event = {
+            "alert_type": "shortage_resolved",
+            "therapeutic_category": "Antivirals",
+            "product_id": "FDA-9",
+            "week_timestamp": "2026-W37",
+            "shortage_brief_result": _bedrock_result("The oseltamivir shortage has RESOLVED."),
+        }
+        with patch("shared.token_utils.generate_unsubscribe_url", return_value="https://unsub.test"):
+            result = shortage_module.dispatch_shortage_alert(event, "shortage_resolved")
+
+        assert result["total_dispatched"] == 1
+        sent = mocks["ses"].send_email.call_args[1]
+        assert "RESOLVED" in sent["Message"]["Body"]["Text"]["Data"]
+        assert "Resolved" in sent["Message"]["Subject"]["Data"]
+
+
+class TestDigestDispatch:
+    """The weekly digest goes to ALL shortage subscribers, deduped by email."""
+
+    def test_digest_dispatches_to_all_deduped(self, shortage_module):
+        mocks = shortage_module._test_mocks
+        # Two subs share an email (should dedupe to 1), a third is distinct.
+        subs = [
+            _make_shortage_subscriber(subscription_id="s1", contact_email="a@x.com", alert_category="antivirals"),
+            _make_shortage_subscriber(subscription_id="s2", contact_email="a@x.com", alert_category="antibiotics"),
+            _make_shortage_subscriber(subscription_id="s3", contact_email="b@x.com", alert_category="respiratory"),
+        ]
+        mocks["sub_table"].scan.return_value = {"Items": subs}
+        mocks["ses"].reset_mock()
+
+        event = {
+            "alert_type": "shortage_digest",
+            "week_timestamp": "2026-W37",
+            "shortage_brief_result": _bedrock_result("# WEEKLY DRUG SHORTAGE DIGEST\nTop shortages this week."),
+        }
+        with patch("shared.token_utils.generate_unsubscribe_url", return_value="https://unsub.test"):
+            result = shortage_module.dispatch_shortage_digest(event, "shortage_digest")
+
+        # 3 subscriber rows -> 2 unique emails
+        assert result["total_dispatched"] == 2
+        assert mocks["ses"].send_email.call_count == 2
+        sent = mocks["ses"].send_email.call_args[1]
+        assert "WEEKLY DRUG SHORTAGE DIGEST" in sent["Message"]["Body"]["Text"]["Data"]
+        assert "Weekly" in sent["Message"]["Subject"]["Data"]
+
+    def test_digest_no_subscribers_skipped(self, shortage_module):
+        mocks = shortage_module._test_mocks
+        mocks["sub_table"].scan.return_value = {"Items": []}
+        event = {
+            "alert_type": "shortage_digest",
+            "week_timestamp": "2026-W37",
+            "shortage_brief_result": _bedrock_result("digest body"),
+        }
+        result = shortage_module.dispatch_shortage_digest(event, "shortage_digest")
+        assert result["total_dispatched"] == 0
+        assert result["success"] is False
+
+    def test_get_all_shortage_subscribers_excludes_unverified(self, shortage_module):
+        mocks = shortage_module._test_mocks
+        subs = [
+            _make_shortage_subscriber(subscription_id="ok", contact_email="ok@x.com"),
+            _make_shortage_subscriber(subscription_id="unv", contact_email="unv@x.com", verified_at=None),
+        ]
+        mocks["sub_table"].scan.return_value = {"Items": subs}
+        result = shortage_module._get_all_shortage_subscribers()
+        emails = {s["contact_email"] for s in result}
+        assert "ok@x.com" in emails
+        assert "unv@x.com" not in emails

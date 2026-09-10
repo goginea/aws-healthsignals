@@ -4,12 +4,22 @@
   "States": {
     "DetermineShortageAlertType": {
       "Type": "Choice",
-      "Comment": "Route between standalone shortage brief and combined disease+shortage brief.",
+      "Comment": "Route between standalone shortage brief, resolution notice, weekly digest, and combined disease+shortage brief.",
       "Choices": [
         {
           "Variable": "$.alert_type",
           "StringEquals": "combined",
           "Next": "CombinedSignalBrief"
+        },
+        {
+          "Variable": "$.alert_type",
+          "StringEquals": "shortage_resolved",
+          "Next": "ShortageResolvedBrief"
+        },
+        {
+          "Variable": "$.alert_type",
+          "StringEquals": "shortage_digest",
+          "Next": "ShortageDigestBrief"
         }
       ],
       "Default": "ShortageAlertBrief"
@@ -31,6 +41,90 @@
             {
               "role": "user",
               "content.$": "States.Format('Generate a shortage situation brief for the following drug shortage data. Therapeutic category: {}. Week: {}. Affected product: {} (NDC {}). Supply status: {} ({}). Reason for shortage: {}. Estimated resolution date: {}.', $.therapeutic_category, $.week_timestamp, $.product_name, $.product_id, $.supply_status, $.shortage_status, $.reason_for_shortage, $.estimated_resolution_date)"
+            }
+          ],
+          "thinking": {
+            "type": "disabled"
+          }
+        }
+      },
+      "ResultPath": "$.shortage_brief_result",
+      "Retry": [
+        {
+          "ErrorEquals": ["Bedrock.ThrottlingException"],
+          "IntervalSeconds": 5,
+          "MaxAttempts": 3,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
+          "Next": "ShortageGenerationFailed"
+        }
+      ],
+      "Next": "DispatchShortageAlert"
+    },
+
+    "ShortageResolvedBrief": {
+      "Type": "Task",
+      "Comment": "Generate a shortage-resolved notification for pharmacists using Claude Sonnet 4.5",
+      "Resource": "arn:aws:states:::bedrock:invokeModel",
+      "Parameters": {
+        "ModelId": "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+        "ContentType": "application/json",
+        "Accept": "application/json",
+        "Body": {
+          "anthropic_version": "bedrock-2023-05-31",
+          "max_tokens": 1200,
+          "system": "You are a pharmaceutical supply chain analyst notifying pharmacists at rural health facilities that a previously reported drug shortage has RESOLVED. Generate a concise resolution notice (200-350 words) with these sections:\n1. RESOLUTION SUMMARY — State clearly that the shortage for the named medication is no longer listed in the FDA Drug Shortage Database as of this reporting week.\n2. OPERATIONAL NOTES — Practical, operational guidance only: pharmacists may resume normal ordering as availability is confirmed with their wholesaler/distributor; verify current stock and re-evaluate any temporary conservation measures previously put in place.\n3. CAVEATS — Resolution reflects FDA database status and may lag real-world availability; confirm directly with suppliers before changing ordering patterns.\n\nMandatory Constraints:\n- Do NOT provide clinical guidance, drug substitution, or treatment recommendations.\n- Frame everything as OPERATIONAL PREPAREDNESS, not clinical decision-making.\n- Always include disclaimer: FOR PHARMACIST REVIEW ONLY.\n- Do not state the resolution as a guarantee of local availability; use 'FDA database indicates', 'based on reported data'.\n- Reference source as 'FDA Drug Shortage Database'.\n\nUse professional, reassuring but non-alarmist language for licensed pharmacists.",
+          "messages": [
+            {
+              "role": "user",
+              "content.$": "States.Format('Generate a shortage RESOLVED notification. Therapeutic category: {}. Week: {}. Product that resolved: {} (NDC {}). Previous supply status: {}. Prior reason for shortage: {}.', $.therapeutic_category, $.week_timestamp, $.product_name, $.product_id, $.previous_supply_status, $.reason_for_shortage)"
+            }
+          ],
+          "thinking": {
+            "type": "disabled"
+          }
+        }
+      },
+      "ResultPath": "$.shortage_brief_result",
+      "Retry": [
+        {
+          "ErrorEquals": ["Bedrock.ThrottlingException"],
+          "IntervalSeconds": 5,
+          "MaxAttempts": 3,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
+          "Next": "ShortageGenerationFailed"
+        }
+      ],
+      "Next": "DispatchShortageAlert"
+    },
+
+    "ShortageDigestBrief": {
+      "Type": "Task",
+      "Comment": "Generate the weekly drug-shortage digest (top NEW/WORSENING + recently RESOLVED) using Claude Sonnet 4.5",
+      "Resource": "arn:aws:states:::bedrock:invokeModel",
+      "Parameters": {
+        "ModelId": "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+        "ContentType": "application/json",
+        "Accept": "application/json",
+        "Body": {
+          "anthropic_version": "bedrock-2023-05-31",
+          "max_tokens": 2500,
+          "system": "You are a pharmaceutical supply chain analyst producing a WEEKLY DRUG SHORTAGE DIGEST for pharmacists at rural health facilities. You are given two JSON lists: the week's most significant NEW or WORSENING shortages (already ranked, up to 10) and the most recently RESOLVED shortages (up to 5). Produce a scannable digest (400-700 words) with these sections:\n1. WEEK AT A GLANCE — 2-3 sentences summarizing overall shortage activity this week (counts, notable therapeutic categories).\n2. TOP ACTIVE SHORTAGES (NEW & WORSENING) — A numbered list. For each item give product name, therapeutic category, supply status, status (NEW/WORSENING), and reason for shortage. Keep each item to 1-2 lines.\n3. RECENTLY RESOLVED — A short list of products no longer in shortage this week.\n4. OPERATIONAL REMINDERS — General operational preparedness reminders (inventory review cadence, confirm availability with distributors, plan prescriber communication for high-impact items).\n\nMandatory Constraints:\n- Do NOT provide clinical guidance, drug substitution, or therapeutic alternatives.\n- Frame everything as OPERATIONAL PREPAREDNESS only.\n- Always include disclaimer: FOR PHARMACIST REVIEW ONLY.\n- Only reference items present in the provided lists; do NOT invent products, dates, or quantities.\n- If a list is empty, state 'None this week' for that section.\n- Reference source as 'FDA Drug Shortage Database'.\n\nUse professional, concise, non-alarmist language suitable for a weekly operational bulletin.",
+          "messages": [
+            {
+              "role": "user",
+              "content.$": "States.Format('Generate the weekly drug shortage digest for week {}. Top NEW/WORSENING shortages (JSON, ranked): {}. Recently RESOLVED shortages (JSON): {}.', $.week_timestamp, States.JsonToString($.top_active), States.JsonToString($.recently_resolved))"
             }
           ],
           "thinking": {

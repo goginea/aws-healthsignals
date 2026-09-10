@@ -205,6 +205,29 @@ def lambda_handler(event: dict, context: Any) -> dict:
             alerts_triggered += 1
             update_alert_execution_arn(product_id, week_timestamp, execution_arn)
 
+    # 11. Process RESOLVED shortages (good news — not subject to the NEW+WORSENING
+    # circuit breaker). Each resolved product gets a one-off "shortage resolved"
+    # notification via the shortage_resolved workflow branch.
+    for record in filtered_changes["RESOLVED"]:
+        product_id = record["product_id"]
+
+        if is_alert_already_sent(product_id, week_timestamp):
+            log_structured("info", "alert_skipped_idempotency", {
+                "product_id": product_id,
+                "week_timestamp": week_timestamp,
+                "shortage_status": "RESOLVED",
+            })
+            continue
+
+        write_pending_alert(record, week_timestamp)
+
+        execution_arn = invoke_step_functions(
+            record, week_timestamp, alert_type="shortage_resolved"
+        )
+        if execution_arn:
+            alerts_triggered += 1
+            update_alert_execution_arn(product_id, week_timestamp, execution_arn)
+
     # Emit CloudWatch metrics
     emit_metrics(
         changes_detected=sum(len(v) for v in filtered_changes.values()),
@@ -641,12 +664,16 @@ def update_alert_execution_arn(
 # === Step Functions Invocation ===
 
 
-def invoke_step_functions(record: dict, week_timestamp: str) -> str | None:
+def invoke_step_functions(
+    record: dict, week_timestamp: str, alert_type: str = "shortage"
+) -> str | None:
     """Invoke Step Functions state machine for alert generation.
 
     Args:
         record: Annotated shortage record with shortage_status.
         week_timestamp: Current ISO week.
+        alert_type: Workflow branch to run — "shortage" for NEW/WORSENING
+            (default), "shortage_resolved" for RESOLVED shortages.
 
     Returns:
         Execution ARN if successful, None otherwise.
@@ -658,7 +685,7 @@ def invoke_step_functions(record: dict, week_timestamp: str) -> str | None:
         return None
 
     payload = {
-        "alert_type": "shortage",
+        "alert_type": alert_type,
         "product_id": record["product_id"],
         "product_name": record.get("product_name", ""),
         "therapeutic_category": record.get("therapeutic_category", ""),

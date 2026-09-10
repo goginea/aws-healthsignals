@@ -63,6 +63,8 @@ def register(context: dict) -> dict[str, callable]:
     return {
         "shortage": dispatch_shortage_alert,
         "combined": dispatch_shortage_alert,
+        "shortage_resolved": dispatch_shortage_alert,
+        "shortage_digest": dispatch_shortage_digest,
     }
 
 
@@ -95,6 +97,15 @@ def _extract_brief_text(event: dict) -> str:
         if text:
             return text
     return ""
+
+
+def _shortage_subject(alert_type: str, label: str) -> str:
+    """Build the email subject line, reflecting the alert type."""
+    if alert_type == "shortage_resolved":
+        return f"[HealthSignals] Drug Shortage Resolved: {label}"
+    if alert_type == "shortage_digest":
+        return f"[HealthSignals] Weekly Drug Shortage Digest — {label}"
+    return f"[HealthSignals] Drug Shortage Alert: {label}"
 
 
 def dispatch_shortage_alert(event: dict, alert_type: str) -> dict:
@@ -193,6 +204,124 @@ def dispatch_shortage_alert(event: dict, alert_type: str) -> dict:
     }
 
 
+def dispatch_shortage_digest(event: dict, alert_type: str) -> dict:
+    """Deliver the weekly shortage digest to ALL active shortage subscribers.
+
+    Unlike per-category shortage alerts, the digest covers every therapeutic
+    category, so it is sent once to each distinct subscriber (deduped by email)
+    across all categories rather than filtered to one category.
+    """
+    week_timestamp = event.get("week_timestamp", "")
+
+    logger.info(json.dumps({
+        "event_type": "shortage_digest_dispatch_start",
+        "alert_type": alert_type,
+        "week_timestamp": week_timestamp,
+    }))
+
+    # Derive the digest body from the Bedrock brief result (workflow does not
+    # pre-build alert_content — same handling as dispatch_shortage_alert).
+    alert_content = event.get("alert_content") or {}
+    if not (alert_content.get("email_body") or alert_content.get("situation_brief")):
+        derived = _extract_brief_text(event)
+        if derived:
+            alert_content = {**alert_content, "email_body": derived}
+
+    sender_email = _system["delivery"]["ses_sender_email"]
+    max_sms = _system["delivery"]["max_sms_length"]
+
+    subscribers = _get_all_shortage_subscribers()
+    results = {"dispatched": [], "skipped": [], "errors": []}
+
+    if not subscribers:
+        logger.info(json.dumps({
+            "event_type": "shortage_digest_no_subscribers",
+            "week_timestamp": week_timestamp,
+        }))
+        results["skipped"].append({"reason": "No active shortage subscribers"})
+    else:
+        for sub in subscribers:
+            try:
+                # Label the digest with the week rather than a single category.
+                _dispatch_shortage_to_subscriber(
+                    sub, alert_content, week_timestamp or "All categories",
+                    alert_type, sender_email, max_sms
+                )
+                results["dispatched"].append({
+                    "contact": sub.get("contact_email"),
+                    "county_fips": sub.get("county_fips"),
+                    "channels": sub.get("channels", []),
+                })
+            except Exception as e:
+                logger.error(f"Shortage digest delivery failed for {sub.get('contact_email')}: {e}")
+                results["errors"].append({
+                    "contact": sub.get("contact_email"),
+                    "error": str(e),
+                })
+
+    recipients_count = len(results["dispatched"])
+    logger.info(json.dumps({
+        "event_type": "shortage_digest_dispatch_complete",
+        "week_timestamp": week_timestamp,
+        "recipients_count": recipients_count,
+        "errors_count": len(results["errors"]),
+    }))
+
+    return {
+        "alert_type": alert_type,
+        "week_timestamp": week_timestamp,
+        "total_dispatched": recipients_count,
+        "total_errors": len(results["errors"]),
+        "details": results,
+        "success": recipients_count > 0,
+    }
+
+
+def _get_all_shortage_subscribers() -> list:
+    """Return all active, verified, non-paused shortage subscribers, deduped by email.
+
+    A shortage subscriber is any subscription carrying an alert_category (the
+    field that opts a recipient into the drug-shortage feed). The weekly digest
+    goes to each distinct recipient once regardless of how many categories they
+    follow.
+    """
+    try:
+        response = _sub_table.scan(
+            FilterExpression="attribute_exists(alert_category) AND #s = :active",
+            ExpressionAttributeNames={"#s": "status"},
+            ExpressionAttributeValues={":active": "active"},
+        )
+        items = response.get("Items", [])
+        while "LastEvaluatedKey" in response:
+            response = _sub_table.scan(
+                FilterExpression="attribute_exists(alert_category) AND #s = :active",
+                ExpressionAttributeNames={"#s": "status"},
+                ExpressionAttributeValues={":active": "active"},
+                ExclusiveStartKey=response["LastEvaluatedKey"],
+            )
+            items.extend(response.get("Items", []))
+    except Exception as e:
+        logger.error(f"Shortage digest subscriber scan failed: {e}")
+        return []
+
+    now = datetime.utcnow().isoformat()
+    by_email = {}
+    for item in items:
+        if not item.get("verified_at"):
+            continue
+        pause_until = item.get("pause_until")
+        if pause_until and pause_until > now:
+            continue
+        email = item.get("contact_email")
+        if not email or email in by_email:
+            continue
+        prefs = item.get("delivery_preferences", {})
+        item["channels"] = prefs.get("channels", item.get("channels", ["email"]))
+        by_email[email] = item
+
+    return list(by_email.values())
+
+
 def _get_shortage_subscribers(therapeutic_category: str) -> list:
     """Query subscriptions table using GSI therapeutic-category-lookup."""
     try:
@@ -244,7 +373,7 @@ def _dispatch_shortage_to_subscriber(
         disclaimer = "\n\nFOR PHARMACIST REVIEW ONLY — No specific drug substitution recommendations provided."
         email_body += disclaimer
         email_body += f"\n\n---\nTo unsubscribe from HealthSignals alerts: {unsub_url}"
-        subject = f"[HealthSignals] Drug Shortage Alert: {therapeutic_category}"
+        subject = _shortage_subject(alert_type, therapeutic_category)
 
         _ses.send_email(
             Source=sender_email,

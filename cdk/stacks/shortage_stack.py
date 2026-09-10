@@ -338,6 +338,49 @@ class ShortageStack(Stack):
             targets.LambdaFunction(self.shortage_enrichment)
         )
 
+        # --- Weekly Shortage Digest Lambda ---
+        # Compiles a single weekly digest (top NEW/WORSENING + recently RESOLVED)
+        # and starts one shortage_digest Step Functions execution.
+        self.shortage_digest = _lambda.Function(
+            self,
+            "ShortageDigest",
+            function_name="healthsignals-shortage-digest",
+            runtime=_lambda.Runtime.PYTHON_3_11,
+            code=_lambda.Code.from_asset("../lambdas/orchestration/shortage_digest"),
+            handler="handler.lambda_handler",
+            timeout=Duration.minutes(3),
+            memory_size=512,
+            layers=[self.shared_layer],
+            environment={
+                "SHORTAGE_STATE_TABLE": self.shortage_state_table.table_name,
+                "STATE_MACHINE_ARN": self.state_machine.state_machine_arn,
+                "LOG_LEVEL": "INFO",
+            },
+        )
+        # Read shortage-state (scan by week) + start the digest workflow
+        self.shortage_state_table.grant_read_data(self.shortage_digest)
+        self.shortage_digest.add_to_role_policy(
+            iam.PolicyStatement(
+                actions=["states:StartExecution"],
+                resources=[self.state_machine.state_machine_arn],
+            )
+        )
+
+        # --- EventBridge Schedule: Weekly digest, Monday 08:00 UTC ---
+        # Runs 2h after the Monday 06:00 fetch + change detection so the
+        # shortage-state table already reflects the current week.
+        self.weekly_digest_rule = events.Rule(
+            self,
+            "WeeklyShortageDigestSchedule",
+            schedule=events.Schedule.cron(
+                minute="0", hour="8", week_day="MON"
+            ),
+            description="Triggers the weekly drug shortage digest at 8 AM UTC Monday",
+        )
+        self.weekly_digest_rule.add_target(
+            targets.LambdaFunction(self.shortage_digest)
+        )
+
         # --- CloudWatch Alarms ---
         ops_topic = None
         if ops_topic_arn:

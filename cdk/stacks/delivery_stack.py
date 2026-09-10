@@ -99,7 +99,10 @@ class DeliveryStack(Stack):
         self.alert_topic.grant_publish(self.alert_dispatcher)
         self.alert_dispatcher.add_to_role_policy(
             iam.PolicyStatement(
-                actions=["dynamodb:Query", "dynamodb:GetItem", "dynamodb:UpdateItem"],
+                # Scan is required by the weekly shortage digest, which fans out
+                # to all shortage subscribers (across categories) rather than a
+                # single therapeutic-category GSI lookup.
+                actions=["dynamodb:Query", "dynamodb:GetItem", "dynamodb:UpdateItem", "dynamodb:Scan"],
                 resources=[
                     f"arn:aws:dynamodb:{self.region}:{self.account}:table/healthsignals-subscriptions",
                     f"arn:aws:dynamodb:{self.region}:{self.account}:table/healthsignals-subscriptions/index/*",

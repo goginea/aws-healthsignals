@@ -3,6 +3,7 @@
 Tests the change classification logic (NEW, WORSENING, RESOLVED, UNCHANGED),
 therapeutic category filtering, circuit breaker, and idempotency checks.
 """
+import json
 import pytest
 from unittest.mock import patch, MagicMock
 
@@ -328,3 +329,28 @@ class TestIdempotency:
         with patch.object(handler.alerts_table, "get_item", return_value=mock_response):
             result = handler.is_alert_already_sent("IDEM-003", "2024-W03")
             assert result is True
+
+
+class TestResolvedAlerting:
+    """Feature 1: RESOLVED shortages trigger a shortage_resolved SFN execution."""
+
+    def test_invoke_step_functions_defaults_to_shortage(self, handler):
+        record = {"product_id": "P1", "product_name": "Drug A", "therapeutic_category": "antivirals"}
+        with patch.dict("os.environ", {}, clear=False), \
+             patch.object(handler, "STATE_MACHINE_ARN", "arn:sm:test"), \
+             patch.object(handler, "sfn") as mock_sfn:
+            mock_sfn.start_execution.return_value = {"executionArn": "arn:exec:1"}
+            handler.invoke_step_functions(record, "2026-W37")
+            sent = json.loads(mock_sfn.start_execution.call_args[1]["input"])
+            assert sent["alert_type"] == "shortage"
+
+    def test_invoke_step_functions_passes_resolved_alert_type(self, handler):
+        record = {"product_id": "P2", "product_name": "Drug B", "therapeutic_category": "antivirals",
+                  "shortage_status": "RESOLVED", "previous_supply_status": "CURRENTLY_IN_SHORTAGE"}
+        with patch.object(handler, "STATE_MACHINE_ARN", "arn:sm:test"), \
+             patch.object(handler, "sfn") as mock_sfn:
+            mock_sfn.start_execution.return_value = {"executionArn": "arn:exec:2"}
+            handler.invoke_step_functions(record, "2026-W37", alert_type="shortage_resolved")
+            sent = json.loads(mock_sfn.start_execution.call_args[1]["input"])
+            assert sent["alert_type"] == "shortage_resolved"
+            assert sent["shortage_status"] == "RESOLVED"
