@@ -325,6 +325,15 @@ def fetch_county_level_data(
         "errors": [],
     }
 
+    geo_pattern = county_config.get("s3_storage", {}).get(
+        "geo_prefix_pattern",
+        "raw/cdc_nssp_geo/{disease}/{year}/W{week}/{level}/{geo_id}.json",
+    )
+    # Per (disease, hsa_nci_id) -> the first county record with a real value,
+    # used to emit an HSA-level record (rdmq-nq56 county values ARE the HSA
+    # value; trend_source='HSA'). Rural HSAs with no data simply never populate.
+    hsa_records: dict = {}
+
     for fips, meta in targets.items():
         try:
             row = fetch_county_row(
@@ -346,6 +355,11 @@ def fetch_county_level_data(
         if not row:
             summary["no_data"].append(fips)
             continue
+
+        # Always persist the county -> HSA mapping, even when the county has no
+        # per-disease value (e.g. Brown County is 'Data Unavailable'). The
+        # surveillance-context fallback needs this to find the county's HSA.
+        _write_county_hsa_map(row, fips, meta, data_bucket, summary)
 
         for disease_key in disease_keys:
             record = parse_county_row(
@@ -375,7 +389,69 @@ def fetch_county_level_data(
                 summary["errors"].append(f"S3 write failed {s3_key}: {str(e)}")
                 logger.error(f"County S3 write failed for {s3_key}: {e}")
 
+            # Capture the first populated county per (disease, HSA) as the HSA value.
+            hsa_id = record.get("hsa_nci_id")
+            if hsa_id and (disease_key, hsa_id) not in hsa_records:
+                hsa_records[(disease_key, hsa_id)] = record
+
+    # Emit HSA-level geo records (one per disease/HSA that had a value).
+    for (disease_key, hsa_id), record in hsa_records.items():
+        year, week = _year_week_from_week_end(record.get("week_end", ""), today)
+        s3_key = geo_pattern.format(
+            disease=disease_key, year=year, week=week, level="hsa", geo_id=hsa_id
+        )
+        hsa_record = {
+            "source": "cdc_nssp_county",
+            "dataset_id": "rdmq-nq56",
+            "disease": disease_key,
+            "geo_level": "hsa",
+            "geo_id": hsa_id,
+            "name": record.get("hsa", ""),
+            "hsa_counties": record.get("hsa_counties", ""),
+            "state_key": record.get("state_key", "unknown"),
+            "week_end": record.get("week_end", ""),
+            "value": record.get("value"),
+            "smoothed_value": record.get("smoothed_value"),
+            "trend": record.get("trend", "unknown"),
+            "trend_raw": record.get("trend_raw", ""),
+            "fetched_at": datetime.utcnow().isoformat(),
+        }
+        try:
+            store_to_s3(hsa_record, s3_key, data_bucket)
+            summary["written"].append(s3_key)
+        except Exception as e:
+            summary["errors"].append(f"S3 write failed {s3_key}: {str(e)}")
+            logger.error(f"HSA S3 write failed for {s3_key}: {e}")
+
     return summary
+
+
+def _write_county_hsa_map(
+    row: dict, fips: str, meta: dict, data_bucket: str, summary: dict
+) -> None:
+    """Persist a county -> HSA mapping record (independent of disease values).
+
+    Written to raw/cdc_nssp_county/_hsa_map/{fips}.json so the surveillance
+    fallback can resolve a value-less county to its HSA.
+    """
+    hsa_id = row.get("hsa_nci_id", "")
+    if not hsa_id:
+        return
+    mapping = {
+        "fips": fips,
+        "county_name": meta.get("county_name", row.get("county", "")),
+        "state_key": meta.get("state_key", "unknown"),
+        "hsa_nci_id": hsa_id,
+        "hsa": row.get("hsa", ""),
+        "hsa_counties": row.get("hsa_counties", ""),
+        "fetched_at": datetime.utcnow().isoformat(),
+    }
+    key = f"raw/cdc_nssp_county/_hsa_map/{fips}.json"
+    try:
+        store_to_s3(mapping, key, data_bucket)
+    except Exception as e:
+        summary["errors"].append(f"HSA map write failed {key}: {str(e)}")
+        logger.error(f"HSA map write failed for {key}: {e}")
 
 
 def fetch_county_row(
@@ -466,6 +542,11 @@ def parse_county_row(
         "smoothed_value": smoothed_value,
         "trend": trend,
         "trend_raw": raw_trend,
+        # HSA (Health Service Area) mapping — used by the surveillance-context
+        # fallback so a county with no standalone value can degrade to its HSA.
+        "hsa_nci_id": row.get("hsa_nci_id", ""),
+        "hsa": row.get("hsa", ""),
+        "hsa_counties": row.get("hsa_counties", ""),
         "fetched_at": datetime.utcnow().isoformat(),
     }
 

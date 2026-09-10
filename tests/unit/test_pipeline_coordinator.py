@@ -136,20 +136,89 @@ class TestCountySupplementalEnrichment:
             handler._enrich_with_county_nssp(signal, "48201", "influenza")
         assert signal == {"value": 2.5, "trend": "unknown"}
 
-    def test_build_county_surveillance_context(self, handler):
-        with patch.object(handler, "load_latest_surveillance_signal", return_value=COUNTY_RECORD_RISING):
-            ctx = handler._build_county_surveillance_context("48143", "influenza", MOCK_COUNTY_CONFIG)
-        assert ctx["value"] == 0.31
-        assert ctx["trend"] == "rising"
-        assert ctx["source"] == "cdc_nssp_county"
-
-    def test_build_county_surveillance_context_none_when_absent(self, handler):
-        with patch.object(handler, "load_latest_surveillance_signal", return_value=None):
-            ctx = handler._build_county_surveillance_context("48143", "influenza", MOCK_COUNTY_CONFIG)
-        assert ctx is None
-
     def test_build_county_surveillance_context_none_when_no_config(self, handler):
         assert handler._build_county_surveillance_context("48143", "influenza", None) is None
+
+
+HSA_RECORD = {
+    "geo_level": "hsa", "name": "Erath, TX - Comanche, TX",
+    "hsa_counties": "Comanche, Erath",
+    "value": 1.4, "trend": "rising", "trend_raw": "Increasing",
+    "week_end": "2026-09-05", "source": "cdc_nssp_county",
+}
+STATE_FALLBACK_RECORD = {
+    "geo_level": "state", "name": "Texas",
+    "value": 0.3, "trend": "rising", "week_end": "2026-08-29", "source": "cdc_nssp",
+}
+COUNTY_ZERO_RECORD = {
+    "geo_level": "county", "name": "Erath County", "county_name": "Erath County",
+    "value": 0.0, "trend": "stable", "trend_raw": "No Change",
+    "week_end": "2026-09-05", "source": "cdc_nssp_county",
+}
+
+
+class TestSurveillanceFallbackChain:
+    """county -> HSA -> state fallback for county_surveillance context."""
+
+    def test_has_value_treats_zero_as_present(self, handler):
+        assert handler._has_value({"value": 0.0}) is True
+        assert handler._has_value({"value": 2.5}) is True
+        assert handler._has_value({"value": None}) is False
+        assert handler._has_value({}) is False
+        assert handler._has_value(None) is False
+
+    def test_county_value_wins_including_zero(self, handler):
+        # Erath: real 0.0 county value -> stay at county, do NOT fall through.
+        with patch.object(handler, "load_latest_surveillance_signal", return_value=COUNTY_ZERO_RECORD):
+            ctx = handler._build_county_surveillance_context(
+                "48143", "influenza", MOCK_COUNTY_CONFIG, state_key="texas"
+            )
+        assert ctx["resolved_from"] == "county"
+        assert ctx["value"] == 0.0
+
+    def test_falls_back_to_hsa_when_county_unavailable(self, handler):
+        # County has no value; HSA does.
+        def _load(level, geo_id, disease, cfg):
+            return None if level == "county" else (HSA_RECORD if level == "hsa" else None)
+        with patch.object(handler, "load_latest_surveillance_signal", side_effect=_load), \
+             patch.object(handler, "_load_hsa_map", return_value={"hsa_nci_id": "468", "state_key": "texas"}):
+            ctx = handler._build_county_surveillance_context(
+                "48049", "influenza", MOCK_COUNTY_CONFIG, state_key="texas"
+            )
+        assert ctx["resolved_from"] == "hsa"
+        assert ctx["value"] == 1.4
+        assert "Comanche" in ctx["hsa_counties"]
+
+    def test_falls_back_to_state_when_county_and_hsa_unavailable(self, handler):
+        # Brown: county None, HSA None -> state.
+        def _load(level, geo_id, disease, cfg):
+            return STATE_FALLBACK_RECORD if level == "state" else None
+        with patch.object(handler, "load_latest_surveillance_signal", side_effect=_load), \
+             patch.object(handler, "_load_hsa_map", return_value={"hsa_nci_id": "468", "state_key": "texas"}):
+            ctx = handler._build_county_surveillance_context(
+                "48049", "influenza", MOCK_COUNTY_CONFIG, state_key="texas"
+            )
+        assert ctx["resolved_from"] == "state"
+        assert ctx["value"] == 0.3
+        assert ctx["name"] == "Texas"
+
+    def test_none_when_nothing_available(self, handler):
+        with patch.object(handler, "load_latest_surveillance_signal", return_value=None), \
+             patch.object(handler, "_load_hsa_map", return_value=None):
+            ctx = handler._build_county_surveillance_context(
+                "48049", "influenza", MOCK_COUNTY_CONFIG, state_key="texas"
+            )
+        assert ctx is None
+
+    def test_state_key_from_hsa_map_when_not_passed(self, handler):
+        def _load(level, geo_id, disease, cfg):
+            return STATE_FALLBACK_RECORD if (level == "state" and geo_id == "texas") else None
+        with patch.object(handler, "load_latest_surveillance_signal", side_effect=_load), \
+             patch.object(handler, "_load_hsa_map", return_value={"hsa_nci_id": "", "state_key": "texas"}):
+            ctx = handler._build_county_surveillance_context(
+                "48049", "influenza", MOCK_COUNTY_CONFIG
+            )
+        assert ctx["resolved_from"] == "state"
 
 
 STATE_RECORD = {

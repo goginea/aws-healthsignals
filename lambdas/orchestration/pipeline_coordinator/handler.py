@@ -404,7 +404,8 @@ def run_detection_pipeline(
         # (the Bedrock brief can reference local surveillance) without changing
         # the metro-driven detection that produced the alert.
         county_surveillance = _build_county_surveillance_context(
-            county.get("county_fips", ""), disease_key, county_nssp_config
+            county.get("county_fips", ""), disease_key, county_nssp_config,
+            state_key=state_key,
         )
         if county_surveillance:
             county_alert["county_surveillance"] = county_surveillance
@@ -576,8 +577,13 @@ def _enrich_with_county_nssp(signal: dict, county_fips: str, disease_key: str) -
 
 
 def _latest_record_under_prefix(base_prefix: str, geo_id: str) -> Optional[dict]:
-    """Walk the most-recent {year}/W{week} folders under base_prefix and read
-    {geo_id}.json. Shared by county/state/national lookups.
+    """Find the most recent {year}/W{week}/{geo_id}.json under base_prefix.
+
+    Searches week folders newest-first for the SPECIFIC object rather than only
+    inspecting the single newest week folder. This matters because different
+    granularities can land in different week folders (e.g. national at W35 but
+    state at W34); a naive "latest week only" check would miss the state file
+    that lives in an earlier week.
     """
     try:
         year_resp = s3_client.list_objects_v2(
@@ -586,26 +592,25 @@ def _latest_record_under_prefix(base_prefix: str, geo_id: str) -> Optional[dict]
         year_prefixes = sorted(
             [p["Prefix"] for p in year_resp.get("CommonPrefixes", [])], reverse=True
         )
-        if not year_prefixes:
-            return None
-
-        week_resp = s3_client.list_objects_v2(
-            Bucket=DATA_BUCKET, Prefix=year_prefixes[0], Delimiter="/"
-        )
-        week_prefixes = sorted(
-            [p["Prefix"] for p in week_resp.get("CommonPrefixes", [])], reverse=True
-        )
-        if not week_prefixes:
-            return None
-
-        data_key = f"{week_prefixes[0]}{geo_id}.json"
-        obj = s3_client.get_object(Bucket=DATA_BUCKET, Key=data_key)
-        return json.loads(obj["Body"].read().decode())
-
-    except s3_client.exceptions.NoSuchKey:
+        for year_prefix in year_prefixes:
+            week_resp = s3_client.list_objects_v2(
+                Bucket=DATA_BUCKET, Prefix=year_prefix, Delimiter="/"
+            )
+            week_prefixes = sorted(
+                [p["Prefix"] for p in week_resp.get("CommonPrefixes", [])],
+                reverse=True,
+            )
+            for week_prefix in week_prefixes:
+                data_key = f"{week_prefix}{geo_id}.json"
+                try:
+                    obj = s3_client.get_object(Bucket=DATA_BUCKET, Key=data_key)
+                    return json.loads(obj["Body"].read().decode())
+                except Exception:
+                    # Object not in this week folder — try the next older week.
+                    continue
         return None
     except Exception as e:
-        logger.debug(f"No surveillance record at {base_prefix}{geo_id}: {e}")
+        logger.debug(f"No surveillance record for {base_prefix}{geo_id}: {e}")
         return None
 
 
@@ -691,11 +696,103 @@ def build_surveillance_context(
     }
 
 
+def _has_value(record: Optional[dict]) -> bool:
+    """True when a surveillance record carries a real numeric value (0.0 counts).
+
+    A 0.0% reading is a genuine measurement ("no local ED activity"), NOT a gap,
+    so it must not fall through to a coarser geography.
+    """
+    return bool(record) and isinstance(record.get("value"), (int, float))
+
+
+def _load_hsa_map(county_fips: str, county_config: dict) -> Optional[dict]:
+    """Load the county -> HSA mapping written by the fetcher (disease-agnostic)."""
+    storage = county_config.get("s3_storage", {})
+    # Derive the map prefix from the county prefix's base (…/cdc_nssp_county/).
+    legacy = storage.get(
+        "prefix_pattern", "raw/cdc_nssp_county/{disease}/{year}/W{week}/{fips}.json"
+    )
+    base = legacy.split("{disease}")[0]  # e.g. "raw/cdc_nssp_county/"
+    key = f"{base}_hsa_map/{county_fips}.json"
+    try:
+        obj = s3_client.get_object(Bucket=DATA_BUCKET, Key=key)
+        return json.loads(obj["Body"].read().decode())
+    except Exception as e:
+        # Missing map (NoSuchKey) or any read error — degrade gracefully. Caught
+        # broadly rather than via s3_client.exceptions.NoSuchKey so this is
+        # robust when s3_client is mocked in tests.
+        logger.debug(f"No HSA map for county {county_fips}: {e}")
+        return None
+
+
+def _context_from_record(record: dict, geo_id: str, resolved_from: str) -> dict:
+    """Shape a surveillance record into the compact alert-context dict."""
+    return {
+        "geo_level": record.get("geo_level", resolved_from),
+        "resolved_from": resolved_from,
+        "geo_id": geo_id,
+        "name": record.get("name") or record.get("county_name") or record.get("geography", ""),
+        "hsa_counties": record.get("hsa_counties", ""),
+        "value": record.get("value"),
+        "smoothed_value": record.get("smoothed_value"),
+        "trend": record.get("trend", "unknown"),
+        "trend_raw": record.get("trend_raw", ""),
+        "week_end": record.get("week_end", ""),
+        "source": record.get("source", "cdc_nssp_county"),
+    }
+
+
 def _build_county_surveillance_context(
-    county_fips: str, disease_key: str, county_config: Optional[dict]
+    county_fips: str,
+    disease_key: str,
+    county_config: Optional[dict],
+    state_key: Optional[str] = None,
 ) -> Optional[dict]:
-    """Back-compat wrapper: county-level surveillance context for an alert."""
-    return build_surveillance_context("county", county_fips, disease_key, county_config)
+    """Build a county's surveillance context with a county -> HSA -> state fallback.
+
+    Rural counties are often 'Data Unavailable' in rdmq-nq56. To still give the
+    alert genuine local context, degrade gracefully to the smallest geography
+    that has a real value:
+
+      1. county  — the county's own measured value (0.0% is a valid value).
+      2. HSA     — the county's Health Service Area (via the fetcher's HSA map).
+      3. state   — the statewide value (the reliable floor).
+
+    The returned context is stamped with resolved_from so the brief can label
+    the level honestly. Context-only — never affects detection or severity.
+    """
+    if not county_config or not county_fips:
+        return None
+    if not county_config.get("enabled", False):
+        return None
+
+    # 1. County's own value (including a real 0.0).
+    county_record = load_latest_surveillance_signal(
+        "county", county_fips, disease_key, county_config
+    )
+    if _has_value(county_record):
+        return _context_from_record(county_record, county_fips, "county")
+
+    # 2. HSA fallback — resolve the county's HSA, then read the HSA record.
+    hsa_map = _load_hsa_map(county_fips, county_config)
+    resolved_state = (hsa_map or {}).get("state_key") or state_key
+    hsa_id = (hsa_map or {}).get("hsa_nci_id")
+    if hsa_id:
+        hsa_record = load_latest_surveillance_signal(
+            "hsa", hsa_id, disease_key, county_config
+        )
+        if _has_value(hsa_record):
+            return _context_from_record(hsa_record, hsa_id, "hsa")
+
+    # 3. State fallback — the reliable floor.
+    if resolved_state:
+        state_record = load_latest_surveillance_signal(
+            "state", resolved_state, disease_key, county_config
+        )
+        if _has_value(state_record):
+            return _context_from_record(state_record, resolved_state, "state")
+
+    return None
 
 
 def extract_latest_signal(raw_data: dict) -> tuple:

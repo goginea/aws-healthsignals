@@ -108,6 +108,9 @@ SAMPLE_COUNTY_ROW = {
     "percent_visits_influenza": "0.31",
     "percent_visits_smoothed_1": "0.32",
     "ed_trends_influenza": "Increasing",
+    "hsa_nci_id": "408",
+    "hsa": "Harris (Houston), TX - Fort Bend, TX",
+    "hsa_counties": "Austin, Chambers, Fort Bend, Harris, Liberty, Montgomery, San Jacinto, Waller",
 }
 
 
@@ -175,6 +178,9 @@ class TestCountyLevelIngestion:
         assert record["geo_level"] == "county"
         assert record["geo_id"] == "48201"
         assert record["name"] == "Harris"
+        # HSA mapping carried for the surveillance-context fallback
+        assert record["hsa_nci_id"] == "408"
+        assert "Fort Bend" in record["hsa_counties"]
 
     def test_parse_county_row_returns_none_when_value_missing(self, handler):
         field_map = MOCK_COUNTY_CONFIG["wide_format_fields"]["influenza"]
@@ -223,10 +229,12 @@ class TestCountyLevelIngestion:
                 app_token="",
                 today=datetime.utcnow(),
             )
-            # 3 target counties (Harris, Fort Bend, Erath) x 1 disease = 3 writes
+            # 3 county records + 1 HSA record (all share hsa_nci_id 408) = 4 in "written"
             assert summary["counties_targeted"] == 3
-            assert len(summary["written"]) == 3
-            assert mock_store.call_count == 3
+            county_writes = [k for k in summary["written"] if "/cdc_nssp_county/influenza/" in k]
+            hsa_writes = [k for k in summary["written"] if "/hsa/408.json" in k]
+            assert len(county_writes) == 3
+            assert len(hsa_writes) == 1
 
     def test_fetch_county_level_data_skips_when_disabled(self, handler):
         from datetime import datetime
@@ -254,6 +262,57 @@ class TestCountyLevelIngestion:
             )
             assert len(summary["no_data"]) == 3
             assert mock_store.call_count == 0
+
+    def test_fetch_county_level_data_writes_hsa_map_and_hsa_record(self, handler):
+        from datetime import datetime
+        with patch.object(handler, "fetch_county_row", return_value=SAMPLE_COUNTY_ROW), \
+             patch.object(handler, "store_to_s3") as mock_store:
+            handler.fetch_county_level_data(
+                active_states=MOCK_STATES,
+                active_diseases=MOCK_DISEASES,
+                data_bucket="test-bucket",
+                app_token="",
+                today=datetime.utcnow(),
+            )
+            keys = [c.args[1] for c in mock_store.call_args_list]
+            # county records
+            assert any("raw/cdc_nssp_county/influenza/" in k and k.endswith("48201.json") for k in keys)
+            # per-county HSA map (disease-agnostic)
+            assert any("raw/cdc_nssp_county/_hsa_map/48201.json" in k for k in keys)
+            # HSA-level geo record keyed by hsa_nci_id
+            assert any("raw/cdc_nssp_geo/influenza/" in k and "/hsa/408.json" in k for k in keys)
+            # Verify HSA record shape
+            hsa_call = next(c for c in mock_store.call_args_list if "/hsa/408.json" in c.args[1])
+            hsa_rec = hsa_call.args[0]
+            assert hsa_rec["geo_level"] == "hsa"
+            assert hsa_rec["geo_id"] == "408"
+            assert hsa_rec["value"] == 0.31
+
+    def test_hsa_map_written_even_when_value_unavailable(self, handler):
+        from datetime import datetime
+        # Row with HSA fields but NO percent value (mirrors Brown County).
+        dark_row = {
+            "week_end": "2026-09-05T00:00:00.000", "geography": "Texas", "county": "Brown",
+            "fips": "48049", "ed_trends_influenza": "Data Unavailable",
+            "hsa_nci_id": "468", "hsa": "Brown, TX - Coleman, TX",
+            "hsa_counties": "Brown, Coleman, Mills, San Saba",
+        }
+        with patch.object(handler, "fetch_county_row", return_value=dark_row), \
+             patch.object(handler, "store_to_s3") as mock_store:
+            handler.fetch_county_level_data(
+                active_states=MOCK_STATES,
+                active_diseases=MOCK_DISEASES,
+                data_bucket="test-bucket",
+                app_token="",
+                today=datetime.utcnow(),
+            )
+            keys = [c.args[1] for c in mock_store.call_args_list]
+            # HSA map written per target county (needed for fallback), keyed by the
+            # target FIPS. No county value records and no HSA value record, since
+            # the rural HSA (468) reports no percentage.
+            assert any("_hsa_map/48143.json" in k for k in keys)
+            assert not any("/hsa/468.json" in k for k in keys)  # rural HSA has no value
+            assert not any("/cdc_nssp_county/influenza/" in k for k in keys)  # no county value
 
 
 NATIONAL_ROW = {
