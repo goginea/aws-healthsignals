@@ -43,6 +43,7 @@ from shared.config_loader import (
     list_active_states,
     list_active_diseases,
     get_all_sentinel_metros,
+    get_data_source_config,
 )
 
 logger = logging.getLogger()
@@ -360,6 +361,12 @@ def run_detection_pipeline(
         }
 
     # --- Step 4: Timing Estimation for each county ---
+    # Load the county-level NSSP config once (supplemental context source).
+    try:
+        county_nssp_config = get_data_source_config("cdc_nssp_county")
+    except Exception:
+        county_nssp_config = None
+
     counties_with_timing = []
     for county in affected_counties:
         timing_payload = {
@@ -391,6 +398,17 @@ def run_detection_pipeline(
             "execution_id": execution_id,
             "external_forecast": timing_result.get("external_forecast"),
         }
+
+        # Supplemental: attach the county's OWN measured ED-visit % + trend as
+        # context, when available. This makes the alert genuinely county-aware
+        # (the Bedrock brief can reference local surveillance) without changing
+        # the metro-driven detection that produced the alert.
+        county_surveillance = _build_county_surveillance_context(
+            county.get("county_fips", ""), disease_key, county_nssp_config
+        )
+        if county_surveillance:
+            county_alert["county_surveillance"] = county_surveillance
+
         counties_with_timing.append(county_alert)
 
     # Set alert type for all county alerts (disease_outbreak only — enrichment
@@ -479,10 +497,16 @@ def load_latest_metro_signals(state_key: str, disease_key: str) -> dict:
             signal_value, trend = extract_latest_signal(raw_data)
 
             if signal_value is not None:
-                metro_signals[msa_code] = {
+                signal = {
                     "value": signal_value,
                     "trend": trend,
                 }
+                # Supplemental enrichment: corroborate/gap-fill with the
+                # county-level NSSP signal for this metro's primary county.
+                # Never suppresses the Delphi signal — only fills an unknown
+                # trend or records agreement.
+                _enrich_with_county_nssp(signal, geo_value, disease_key)
+                metro_signals[msa_code] = signal
 
         except s3_client.exceptions.NoSuchKey:
             logger.warning(f"No data found for MSA {msa_code}/{signal_name}")
@@ -490,6 +514,137 @@ def load_latest_metro_signals(state_key: str, disease_key: str) -> dict:
             logger.error(f"Error loading data for MSA {msa_code}: {e}")
 
     return metro_signals
+
+
+def _enrich_with_county_nssp(signal: dict, county_fips: str, disease_key: str) -> None:
+    """Supplementally enrich a Delphi-derived metro signal with county NSSP data.
+
+    Reads the latest county-level NSSP record for `county_fips`/`disease_key`
+    (written by cdc_respiratory_fetcher) and uses it ONLY to add value, never
+    to suppress the primary Delphi signal:
+
+      * gap-fill: if the Delphi trend is "unknown", adopt the NSSP trend.
+      * corroboration: if Delphi and NSSP agree the trend is "rising", flag it.
+
+    The signal dict is mutated in place. Gated behind the cdc_nssp_county
+    config being enabled with priority="supplemental"; any error is swallowed
+    so core detection is unaffected.
+    """
+    try:
+        county_config = get_data_source_config("cdc_nssp_county")
+    except Exception as e:
+        logger.debug(f"cdc_nssp_county config unavailable, skipping enrichment: {e}")
+        return
+
+    if not county_config.get("enabled", False):
+        return
+    if county_config.get("priority") != "supplemental":
+        # Only run this path while the feed is explicitly supplemental.
+        return
+
+    county_record = load_latest_county_signal(county_fips, disease_key, county_config)
+    if not county_record:
+        return
+
+    county_trend = county_record.get("trend", "unknown")
+    county_value = county_record.get("value")
+
+    # Always attach as read-only context (useful downstream / for debugging).
+    signal["county_nssp"] = {
+        "fips": county_fips,
+        "value": county_value,
+        "trend": county_trend,
+        "trend_raw": county_record.get("trend_raw", ""),
+        "week_end": county_record.get("week_end", ""),
+    }
+
+    delphi_trend = signal.get("trend", "unknown")
+
+    # Gap-fill: Delphi couldn't determine a trend, but NSSP could.
+    if delphi_trend == "unknown" and county_trend not in ("unknown", ""):
+        signal["trend"] = county_trend
+        signal["trend_source"] = "cdc_nssp_county_gapfill"
+        logger.info(
+            f"Gap-filled trend for county {county_fips}/{disease_key} "
+            f"from NSSP: {county_trend}"
+        )
+        return
+
+    # Corroboration: both sources agree the signal is rising.
+    if delphi_trend == "rising" and county_trend == "rising":
+        signal["corroborated_by"] = "cdc_nssp_county"
+
+
+def load_latest_county_signal(
+    county_fips: str, disease_key: str, county_config: dict
+) -> Optional[dict]:
+    """Load the latest county-level NSSP signal record from S3.
+
+    Scans raw/cdc_nssp_county/{disease}/... for the most recent week folder
+    and reads {fips}.json. Returns the parsed record or None if absent.
+    """
+    prefix_pattern = county_config.get("s3_storage", {}).get(
+        "prefix_pattern", "raw/cdc_nssp_county/{disease}/{year}/W{week}/{fips}.json"
+    )
+    # Base prefix up to (and including) the disease segment.
+    base_prefix = prefix_pattern.split("{year}")[0].format(disease=disease_key)
+
+    try:
+        year_resp = s3_client.list_objects_v2(
+            Bucket=DATA_BUCKET, Prefix=base_prefix, Delimiter="/"
+        )
+        year_prefixes = sorted(
+            [p["Prefix"] for p in year_resp.get("CommonPrefixes", [])], reverse=True
+        )
+        if not year_prefixes:
+            return None
+
+        week_resp = s3_client.list_objects_v2(
+            Bucket=DATA_BUCKET, Prefix=year_prefixes[0], Delimiter="/"
+        )
+        week_prefixes = sorted(
+            [p["Prefix"] for p in week_resp.get("CommonPrefixes", [])], reverse=True
+        )
+        if not week_prefixes:
+            return None
+
+        data_key = f"{week_prefixes[0]}{county_fips}.json"
+        obj = s3_client.get_object(Bucket=DATA_BUCKET, Key=data_key)
+        return json.loads(obj["Body"].read().decode())
+
+    except s3_client.exceptions.NoSuchKey:
+        return None
+    except Exception as e:
+        logger.debug(f"No county NSSP signal for {county_fips}/{disease_key}: {e}")
+        return None
+
+
+def _build_county_surveillance_context(
+    county_fips: str, disease_key: str, county_config: Optional[dict]
+) -> Optional[dict]:
+    """Build the county's own measured ED-visit surveillance context for an alert.
+
+    Returns a compact dict ({value, trend, week_end, source}) when a
+    county-level NSSP signal exists, else None. Purely additive alert context —
+    it does not affect whether the alert fires or its severity.
+    """
+    if not county_config or not county_fips:
+        return None
+    if not county_config.get("enabled", False):
+        return None
+
+    record = load_latest_county_signal(county_fips, disease_key, county_config)
+    if not record:
+        return None
+
+    return {
+        "value": record.get("value"),
+        "smoothed_value": record.get("smoothed_value"),
+        "trend": record.get("trend", "unknown"),
+        "trend_raw": record.get("trend_raw", ""),
+        "week_end": record.get("week_end", ""),
+        "source": "cdc_nssp_county",
+    }
 
 
 def extract_latest_signal(raw_data: dict) -> tuple:

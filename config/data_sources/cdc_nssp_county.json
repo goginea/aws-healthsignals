@@ -1,0 +1,68 @@
+{
+  "source_name": "cdc_nssp_county",
+  "display_name": "CDC NSSP County-Level ED Visit Proportions (Trends)",
+  "description": "County-level emergency department visit percentages and trajectory (trend) direction from the National Syndromic Surveillance Program, wide-format dataset. Supplements Delphi metro signals and enables county-level context.",
+  "enabled": true,
+  "priority": "supplemental",
+
+  "api": {
+    "base_url": "https://data.cdc.gov/resource",
+    "dataset_id": "rdmq-nq56",
+    "auth_type": "socrata_app_token",
+    "app_token_env_var": "CDC_SOCRATA_APP_TOKEN",
+    "rate_limit_per_hour_unauthenticated": 1000,
+    "rate_limit_per_hour_authenticated": 40000,
+    "timeout_seconds": 30,
+    "max_records_per_query": 1000
+  },
+
+  "query_defaults": {
+    "lookback_days": 60,
+    "order_by": "week_end DESC",
+    "fips_field": "fips",
+    "county_field": "county",
+    "geography_field": "geography",
+    "week_end_field": "week_end"
+  },
+
+  "wide_format_fields": {
+    "_comment": "rdmq-nq56 is wide-format: one row per county per week, with per-pathogen columns. Map disease_key -> raw %, smoothed %, and trend column. CDC quirk: the smoothed influenza column is 'percent_visits_smoothed_1' (not '_influenza').",
+    "covid": {
+      "percent": "percent_visits_covid",
+      "percent_smoothed": "percent_visits_smoothed_covid",
+      "trend": "ed_trends_covid"
+    },
+    "influenza": {
+      "percent": "percent_visits_influenza",
+      "percent_smoothed": "percent_visits_smoothed_1",
+      "trend": "ed_trends_influenza"
+    },
+    "rsv": {
+      "percent": "percent_visits_rsv",
+      "percent_smoothed": "percent_visits_smoothed_rsv",
+      "trend": "ed_trends_rsv"
+    }
+  },
+
+  "trend_mapping": {
+    "_comment": "Maps rdmq-nq56 ed_trends_* string values to the internal trend vocabulary used by leader_detection (rising/declining/stable/unknown).",
+    "Increasing": "rising",
+    "Decreasing": "declining",
+    "No Change": "stable",
+    "Data Unavailable": "unknown"
+  },
+
+  "s3_storage": {
+    "_comment": "Per-county-per-disease layout mirrors the Delphi per-county pattern so downstream code can look up a single county's latest signal cheaply.",
+    "prefix_pattern": "raw/cdc_nssp_county/{disease}/{year}/W{week}/{fips}.json"
+  },
+
+  "notes": {
+    "sla": "CDC-operated, high reliability",
+    "update_frequency": "Weekly on Fridays",
+    "granularity": "County-level (FIPS). geography field carries the state name; national rows use geography='United States'.",
+    "relationship_to_delphi": "Same underlying NSSP program. Used SUPPLEMENTALLY: gap-fills Delphi trend when Delphi has too few points, corroborates rising signals, and provides each subscribing county's own measured ED-visit % + trend as alert context. Never suppresses a Delphi-driven detection.",
+    "dataset_note": "rdmq-nq56 is the wide-format 'NSSP ED Visit Trajectories' table (percent_visits_{pathogen}, percent_visits_smoothed_*, ed_trends_{pathogen}, fips, county, geography, week_end, hsa). Distinct from vutn-jzwm (state-level, long-format) which cdc_nssp.json uses for state context.",
+    "validated": "2026-09-09"
+  }
+}
