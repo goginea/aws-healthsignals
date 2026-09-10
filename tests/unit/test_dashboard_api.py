@@ -264,3 +264,50 @@ class TestRunDetail:
         assert handler._parse_severity('{"severity":"HIGH"}')["severity"] == "HIGH"
         assert handler._parse_severity('prefix {"severity":"LOW"} suffix')["severity"] == "LOW"
         assert handler._parse_severity("not json at all")["raw"] == "not json at all"
+
+    def test_core_communications_split_email_and_sms(self, handler):
+        """A core communication blob splits into distinct Email + SMS channels."""
+        blob = (
+            "# OUTPUT 1: EMAIL BRIEF\n"
+            "Dear colleagues, this is the full email body with details.\n\n"
+            "## OUTPUT 2: SMS ALERT\n"
+            "Flu rising in your area. Prepare now. Details in email.\n"
+            "*(154 characters)*\n"
+            "---\n"
+            "**ALTERNATIVE SMS (More Action-Oriented):**\n"
+            "Flu surge expected. Activate your plan now."
+        )
+        output = {
+            "situation_brief_result": _bedrock("CORE brief"),
+            "communication_result": _bedrock(blob),
+            "delivery_result": {"Payload": {"total_dispatched": 2}},
+        }
+        handler.sfn.describe_execution.return_value = self._desc(output)
+        r = handler.get_run_detail("arn:ex")
+
+        comms = r["communications"]
+        channels = [c["channel"] for c in comms]
+        assert channels == ["email", "sms"]
+        email = next(c for c in comms if c["channel"] == "email")
+        sms = next(c for c in comms if c["channel"] == "sms")
+        # Email keeps its body; the OUTPUT-1 scaffolding label is stripped.
+        assert "full email body" in email["content"]
+        assert "OUTPUT 1" not in email["content"]
+        # SMS shows the FULL section: primary message AND the alternate variant
+        # (the dashboard is not limited to the single line the dispatcher sends).
+        assert "Flu rising in your area" in sms["content"]
+        assert "ALTERNATIVE SMS" in sms["content"]
+        assert "Activate your plan now" in sms["content"]
+        # ...but not the email body.
+        assert "full email body" not in sms["content"]
+        # Back-compat: r["email"] is the email-channel content.
+        assert "full email body" in r["email"]
+
+    def test_plugin_communications_email_only(self, handler):
+        """A brief-only pipeline (no communication_result) yields an email-only channel."""
+        output = {"shortage_brief_result": _bedrock("DRUG SHORTAGE BRIEF"),
+                  "delivery_result": {"total_dispatched": 1}}
+        handler.sfn.describe_execution.return_value = self._desc(output)
+        r = handler.get_run_detail("arn:ex")
+        assert [c["channel"] for c in r["communications"]] == ["email"]
+        assert "DRUG SHORTAGE BRIEF" in r["communications"][0]["content"]

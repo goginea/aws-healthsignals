@@ -232,14 +232,14 @@
           </div>
         </div>
         <div class="bg-white rounded-lg shadow p-5 mt-4">
-          <div class="text-xs font-semibold text-slate-500 uppercase mb-2">Email that was sent</div>
-          <div class="brief text-slate-700 border-l-4 border-cyan-200 pl-4">${r.email ? renderMarkdown(r.email) : "(none)"}</div>
+          <div class="text-xs font-semibold text-slate-500 uppercase mb-2">Communication sent</div>
+          ${communicationsBlock(r)}
         </div>
         ${briefDiffersFromEmail(r) ? `
-        <div class="bg-white rounded-lg shadow p-5 mt-4">
-          <div class="text-xs font-semibold text-slate-500 uppercase mb-2">Full situation brief</div>
-          <div class="brief text-slate-700">${renderMarkdown(r.brief)}</div>
-        </div>` : ""}`;
+        <details class="bg-white rounded-lg shadow p-5 mt-4">
+          <summary class="cursor-pointer select-none text-xs font-semibold text-slate-500 uppercase">Full situation brief</summary>
+          <div class="brief text-slate-700 mt-2">${renderMarkdown(r.brief)}</div>
+        </details>` : ""}`;
     } catch (e) {
       el.innerHTML = `<div class="text-sm text-rose-600">Failed to load run: ${e.message}</div>`;
     }
@@ -339,6 +339,27 @@
       return out;
     }).join("");
     return html;
+  }
+
+  // Render the per-channel communications as collapsible <details> sections.
+  // Email is expanded by default; other channels (SMS, and any future
+  // destinations) are collapsed. Falls back to the flat r.email for older API
+  // responses that don't include a communications list.
+  function communicationsBlock(r) {
+    const comms = Array.isArray(r.communications) ? r.communications : [];
+    if (!comms.length) {
+      const body = r.email ? renderMarkdown(r.email) : "(none)";
+      return `<div class="brief text-slate-700 border-l-4 border-cyan-200 pl-4">${body}</div>`;
+    }
+    return comms.map((c) => {
+      const open = c.channel === "email" ? " open" : "";
+      const label = escapeHtml(c.label || c.channel || "Channel");
+      const body = c.content ? renderMarkdown(c.content) : "(none)";
+      return `<details${open} class="border border-slate-100 rounded mb-2">
+        <summary class="cursor-pointer select-none px-3 py-2 text-sm font-semibold text-cyan-800 bg-slate-50 rounded">${label}</summary>
+        <div class="brief text-slate-700 border-l-4 border-cyan-200 pl-4 px-3 py-2">${body}</div>
+      </details>`;
+    }).join("");
   }
 
   // Show the "Full situation brief" panel only when the brief carries content

@@ -17,6 +17,7 @@ Environment:
 """
 import json
 import os
+import re
 import logging
 from typing import Any, Optional
 
@@ -348,6 +349,78 @@ def _bedrock_text(node: Any) -> str:
     return content[0].get("text", "") if content else ""
 
 
+# SMS section markers, mirrored from the alert dispatcher's _extract_alert_content
+# so the dashboard shows the SAME email/SMS split the dispatcher produces at send
+# time. This is READ-ONLY / display-only: it does not affect delivery in any way.
+_SMS_MARKERS = ["## OUTPUT 2:", "# OUTPUT 2:", "## SMS ALERT", "# SMS ALERT", "---\n**SMS"]
+_SMS_LABEL_RE = re.compile(r"^[#*\s]*sms(\s*alert)?[\s:*_-]*$", re.IGNORECASE)
+# Leading "OUTPUT 1 / EMAIL BRIEF" scaffolding label (mirrors dispatcher strip).
+_EMAIL_LABEL_RE = re.compile(
+    r"^[#*\s]*(output\s*1\s*[:\-.]?\s*)?email\s*brief[\s:*_]*(\([^)]*\))?[\s:*_]*$",
+    re.IGNORECASE,
+)
+_OUTPUT1_RE = re.compile(r"^[#*\s]*output\s*1\s*[:\-.]?\s*$", re.IGNORECASE)
+
+
+def _strip_email_label(text: str) -> str:
+    """Drop a leading 'OUTPUT 1 / EMAIL BRIEF' scaffolding header (display-only)."""
+    lines = text.split("\n")
+    idx = 0
+    while idx < len(lines):
+        s = lines[idx].strip()
+        if s == "":
+            idx += 1
+            continue
+        if _EMAIL_LABEL_RE.match(s) or _OUTPUT1_RE.match(s):
+            idx += 1
+            continue
+        break
+    return "\n".join(lines[idx:]).strip()
+
+
+def _split_communications(comm_text: str) -> list:
+    """Split a core communication_result blob into per-channel content.
+
+    The core communication step emits one Bedrock blob containing an EMAIL
+    section and an SMS section (## OUTPUT 1 / ## OUTPUT 2). We split on the same
+    markers the dispatcher uses, but — unlike the dispatcher, which reduces the
+    SMS to the single ≤160-char string it will actually send — the dashboard
+    shows the FULL SMS section verbatim (primary message, any alternate SMS
+    variants, character counts, etc.), minus only the leading heading label.
+    Returns a list of {"channel", "label", "content"}; SMS is included only
+    when a distinct, non-empty SMS section is present.
+    """
+    if not comm_text:
+        return []
+    email_body = comm_text
+    sms_text = ""
+    for marker in _SMS_MARKERS:
+        if marker in comm_text:
+            parts = comm_text.split(marker, 1)
+            email_body = parts[0].strip()
+            # Keep the whole SMS section for display (do NOT collapse to the
+            # single line the dispatcher sends). Drop only a leading bare
+            # "SMS ALERT"/"OUTPUT 2" label line left over from the split marker.
+            rest_lines = parts[1].strip().split("\n")
+            while rest_lines and (
+                rest_lines[0].strip() == ""
+                or rest_lines[0].startswith("#")
+                or _SMS_LABEL_RE.match(rest_lines[0].strip())
+            ):
+                rest_lines.pop(0)
+            sms_text = "\n".join(rest_lines).strip()
+            break
+
+    channels = [{
+        "channel": "email",
+        "label": "Email",
+        "content": _strip_email_label(email_body),
+    }]
+    if sms_text:
+        channels.append({"channel": "sms", "label": "SMS", "content": sms_text})
+    return channels
+
+
 def get_run_detail(execution_arn: str) -> dict:
     """DescribeExecution -> parsed {brief, classification, email, delivery}.
 
@@ -373,6 +446,7 @@ def get_run_detail(execution_arn: str) -> dict:
         result["brief"] = ""
         result["classification"] = None
         result["email"] = ""
+        result["communications"] = []
         result["delivery"] = None
         if status == "FAILED":
             result["error"] = "Execution failed before producing output."
@@ -397,9 +471,20 @@ def get_run_detail(execution_arn: str) -> dict:
     elif out.get("severity"):
         classification = {"severity": out.get("severity")}
 
-    # Email — core has a dedicated communication draft; other pipelines derive
-    # the email from the brief at dispatch, so fall back to the brief.
-    email = _bedrock_text(out.get("communication_result")) or brief
+    # Communications — core has a dedicated communication draft (a single blob
+    # holding both an EMAIL and an SMS section); split it into per-channel
+    # content. Other pipelines derive the email from the brief at dispatch and
+    # have no distinct model-drafted SMS, so they get an email-only channel.
+    comm_text = _bedrock_text(out.get("communication_result"))
+    if comm_text:
+        communications = _split_communications(comm_text)
+    elif brief:
+        communications = [{"channel": "email", "label": "Email", "content": brief}]
+    else:
+        communications = []
+    # Back-compat: `email` = the email-channel content (used by the brief-vs-
+    # email de-dup check on the frontend).
+    email = next((c["content"] for c in communications if c["channel"] == "email"), brief)
 
     # Delivery — dispatcher output (recipients).
     delivery = out.get("delivery_result")
@@ -410,6 +495,7 @@ def get_run_detail(execution_arn: str) -> dict:
         "brief": brief,
         "classification": classification,
         "email": email,
+        "communications": communications,
         "delivery": delivery,
         "error": out.get("error"),
     })
