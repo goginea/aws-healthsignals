@@ -91,10 +91,13 @@ All public, no PHI, no HIPAA, no data sharing agreements. See [docs/DATA_SOURCES
 git clone https://github.com/goginea/aws-healthsignals.git
 cd aws-healthsignals
 
-# 2. Deploy infrastructure (up to 10 CDK stacks — takes ~5 minutes first time)
+# 2. Deploy infrastructure (all CDK stacks — takes ~5 minutes first time)
+#    Pass -c dashboard_admin_email=you@example.com to get a loginable admin
+#    dashboard on first deploy. Omit it and the dashboard still deploys, but
+#    has no admin account until you redeploy with the flag.
 cd cdk && pip install -r requirements.txt
 npx aws-cdk bootstrap aws://ACCOUNT_ID/us-east-1
-npx aws-cdk deploy --all --require-approval never
+npx aws-cdk deploy --all --require-approval never -c dashboard_admin_email=you@example.com
 cd ..
 
 # 3. Upload config to S3 (MUST do before any Lambda invocation)
@@ -116,6 +119,17 @@ curl -X POST https://API_ID.execute-api.us-east-1.amazonaws.com/prod/subscriptio
 
 > **Note:** Replace `ACCOUNT_ID` with your AWS account ID. The system monitors weekly and alerts only when thresholds are crossed. See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for the full deployment guide.
 
+> **Admin dashboard login:** When you deploy with `-c dashboard_admin_email=you@example.com`, an initial admin user is created and its password is generated into Secrets Manager (`healthsignals/dashboard-admin-password`). Retrieve it, then log in at the `DashboardUrl` shown in the stack outputs:
+>
+> ```bash
+> aws cloudformation describe-stacks --stack-name HealthSignals-Dashboard \
+>   --query "Stacks[0].Outputs" --output table
+> aws secretsmanager get-secret-value --secret-id healthsignals/dashboard-admin-password \
+>   --query SecretString --output text
+> ```
+>
+> See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md#admin-dashboard) for details.
+
 ## CDK Stacks
 
 ### Core (Always Deployed)
@@ -129,6 +143,9 @@ curl -X POST https://API_ID.execute-api.us-east-1.amazonaws.com/prod/subscriptio
 | `HealthSignals-Delivery`      | SES/SNS, alert dispatcher (plugin registry), feedback collector + recalibrator, feedback DynamoDB |
 | `HealthSignals-Subscription`  | API Gateway, 5 subscription Lambdas, subscriptions DynamoDB + GSIs, Secrets Manager               |
 | `HealthSignals-Monitoring`    | CloudWatch dashboards, X-Ray, alarms, ops SNS topic                                               |
+| `HealthSignals-Dashboard`     | Admin web console: CloudFront + private S3, Cognito admin auth, read-only status/runs API         |
+
+The admin dashboard is always deployed. It self-uploads its frontend and provisions a login only when you supply an admin email — see the note below and [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md#admin-dashboard).
 
 ### Plugin Modules (Feature-Flagged)
 

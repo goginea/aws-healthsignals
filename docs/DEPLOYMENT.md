@@ -42,12 +42,15 @@ Edit `cdk/cdk.json` to configure:
 - `alert_sender_email`: **Must be a verified SES identity** (email or domain). Alerts will not deliver without this. Verify it in Step 11.
 - `enable_cdc_outbreak_alerts`: Set `true` to include CDC Outbreak Alerts module
 - `enable_forecast_providers`: Set `true` to include Forecast Provider module (FluSight + RSV Hub + custom models)
+- `dashboard_admin_email`: Email for the admin dashboard login. If set, an initial Cognito admin user is created and a password is generated into Secrets Manager on deploy. If omitted, the dashboard still deploys but has **no login** until you redeploy with this value set. See [Admin Dashboard](#admin-dashboard) below. This is best passed as a CLI flag (`-c dashboard_admin_email=...`) rather than committed to `cdk.json`.
 
 ### Step 4: Deploy All Stacks
 
 ```bash
-cdk deploy --all --require-approval never
+cdk deploy --all --require-approval never -c dashboard_admin_email=you@example.com
 ```
+
+> Omit `-c dashboard_admin_email=...` and every stack still deploys, including the dashboard — but the dashboard will have no admin account and no one can log in. You can add it later by redeploying just the dashboard stack (see [Admin Dashboard](#admin-dashboard)).
 
 **Core stacks (always deployed):**
 
@@ -58,12 +61,13 @@ cdk deploy --all --require-approval never
 5. `HealthSignals-Delivery` — SES/SNS, alert dispatcher (registry-based), feedback collector/recalibrator
 6. `HealthSignals-Subscription` — API Gateway, subscription Lambdas, Secrets Manager
 7. `HealthSignals-Monitoring` — CloudWatch dashboards, alarms, SNS ops topic
+8. `HealthSignals-Dashboard` — Admin web console (CloudFront + private S3, Cognito auth, read-only API); always deployed, login provisioned only when `dashboard_admin_email` is set
 
 **Optional plugin stacks:**
 
-8. `HealthSignals-DrugShortage` — openFDA fetcher, change detector, enrichment Lambda, own Step Functions, DynamoDB tables, alarms, dashboard
-9. `HealthSignals-CDCOutbreaks` — CDC RSS fetcher, outbreak processor, own Step Functions, DynamoDB table, alarms, dashboard
-10. `HealthSignals-ForecastProviders` — FluSight/RSV Hub fetchers, custom model fetcher, forecast aggregator, DynamoDB table, alarms, dashboard
+9. `HealthSignals-DrugShortage` — openFDA fetcher, change detector, enrichment Lambda, own Step Functions, DynamoDB tables, alarms, dashboard
+10. `HealthSignals-CDCOutbreaks` — CDC RSS fetcher, outbreak processor, own Step Functions, DynamoDB table, alarms, dashboard
+11. `HealthSignals-ForecastProviders` — FluSight/RSV Hub fetchers, custom model fetcher, forecast aggregator, DynamoDB table, alarms, dashboard
 
 ### Step 5: Upload Config to S3
 
@@ -270,6 +274,54 @@ aws lambda invoke --function-name healthsignals-flusight-forecast-fetcher \
 ```
 
 The module begins fetching forecasts on the next Wednesday (10 AM UTC).
+
+---
+
+## Admin Dashboard
+
+`HealthSignals-Dashboard` is an admin-only web console served over CloudFront (private S3 origin via OAC) with a read-only API behind API Gateway. Every API route requires a valid Cognito ID token — the dashboard is **not** public. It shows live stack status, the core pipeline and plugin pipelines, recent Step Functions runs, and the Bedrock-generated brief/classification/email per run.
+
+The stack is **always deployed** as part of `cdk deploy --all`. It is fully self-deploying: on deploy it uploads its own frontend to the site bucket, injects the API URL / region / Cognito client ID into a generated `config.js`, and invalidates the CloudFront cache. There are no manual upload steps.
+
+### Provisioning the admin login
+
+A login is provisioned only when you supply an admin email via CDK context:
+
+```bash
+cdk deploy HealthSignals-Dashboard --require-approval never \
+  -c dashboard_admin_email=you@example.com
+```
+
+When `dashboard_admin_email` is set, the stack:
+
+1. Creates an initial Cognito admin user with that email.
+2. Generates a strong password into Secrets Manager at `healthsignals/dashboard-admin-password`.
+3. Runs a custom resource that sets that password as the user's **permanent** password — so login works immediately, with no Cognito verification email required.
+
+If you deploy **without** `dashboard_admin_email`, the dashboard site and API still deploy, but no admin user, password secret, or login exists. Add one at any time by redeploying just this stack with the flag set — no other stacks are affected.
+
+### Logging in
+
+Read the stack outputs and the generated password:
+
+```bash
+# Site URL, API URL, Cognito IDs
+aws cloudformation describe-stacks --stack-name HealthSignals-Dashboard \
+  --query "Stacks[0].Outputs" --output table
+
+# Initial admin password
+aws secretsmanager get-secret-value \
+  --secret-id healthsignals/dashboard-admin-password \
+  --query SecretString --output text
+```
+
+Open the `DashboardUrl` value in a browser and sign in with your admin email and that password. Change the password after first login (standard Cognito account settings).
+
+### Notes
+
+- The password secret uses a `RETAIN` removal policy on the site bucket, so tearing down the stack does not silently drop your dashboard content bucket. See [TEARDOWN.md](TEARDOWN.md).
+- The dashboard API is read-only (CloudFormation `Describe*`, Step Functions `List/Describe`, DynamoDB `Query/Scan/GetItem`). The one write-ish action is on-demand drift detection (`DetectStackDrift`), triggered per stack by an explicit button.
+- Passing the email as a CLI flag keeps a personal address out of source control. If you prefer, you can set `dashboard_admin_email` in `cdk/cdk.json` context instead, but avoid committing a real personal email to a shared repo.
 
 ---
 
