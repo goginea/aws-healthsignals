@@ -53,8 +53,9 @@
   },
 
   "s3_storage": {
-    "_comment": "Per-county-per-disease layout mirrors the Delphi per-county pattern so downstream code can look up a single county's latest signal cheaply.",
-    "prefix_pattern": "raw/cdc_nssp_county/{disease}/{year}/W{week}/{fips}.json"
+    "_comment": "Per-county-per-disease layout mirrors the Delphi per-county pattern so downstream code can look up a single county's latest signal cheaply. geo_prefix_pattern is the unified layout used for ALL granularities (county|state|national) so a user can 'zoom out' — the {level} segment keys the granularity.",
+    "prefix_pattern": "raw/cdc_nssp_county/{disease}/{year}/W{week}/{fips}.json",
+    "geo_prefix_pattern": "raw/cdc_nssp_geo/{disease}/{year}/W{week}/{level}/{geo_id}.json"
   },
 
   "notes": {

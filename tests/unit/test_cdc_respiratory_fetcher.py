@@ -73,7 +73,10 @@ MOCK_COUNTY_CONFIG = {
         "No Change": "stable",
         "Data Unavailable": "unknown",
     },
-    "s3_storage": {"prefix_pattern": "raw/cdc_nssp_county/{disease}/{year}/W{week}/{fips}.json"},
+    "s3_storage": {
+        "prefix_pattern": "raw/cdc_nssp_county/{disease}/{year}/W{week}/{fips}.json",
+        "geo_prefix_pattern": "raw/cdc_nssp_geo/{disease}/{year}/W{week}/{level}/{geo_id}.json",
+    },
 }
 
 
@@ -168,6 +171,10 @@ class TestCountyLevelIngestion:
         assert record["disease"] == "influenza"
         assert record["fips"] == "48201"
         assert record["source"] == "cdc_nssp_county"
+        # Unified geo shape for zoom-out support
+        assert record["geo_level"] == "county"
+        assert record["geo_id"] == "48201"
+        assert record["name"] == "Harris"
 
     def test_parse_county_row_returns_none_when_value_missing(self, handler):
         field_map = MOCK_COUNTY_CONFIG["wide_format_fields"]["influenza"]
@@ -247,3 +254,88 @@ class TestCountyLevelIngestion:
             )
             assert len(summary["no_data"]) == 3
             assert mock_store.call_count == 0
+
+
+NATIONAL_ROW = {
+    "week_end": "2026-09-05T00:00:00.000",
+    "geography": "United States",
+    "county": "All",
+    "fips": "0",
+    "percent_visits_influenza": "0.19",
+    "percent_visits_smoothed_1": "0.16",
+    "ed_trends_influenza": "Increasing",
+}
+
+# vutn-jzwm state rows, ordered week_end DESC (rising: 2.5 > 2.1 > 1.8)
+STATE_ROWS = [
+    {"geography": "Texas", "pathogen": "Influenza", "percent_visits": "2.5", "week_end": "2026-09-05"},
+    {"geography": "Texas", "pathogen": "Influenza", "percent_visits": "2.1", "week_end": "2026-08-29"},
+    {"geography": "Texas", "pathogen": "Influenza", "percent_visits": "1.8", "week_end": "2026-08-22"},
+]
+
+
+class TestGeoLevelIngestion:
+    def test_trend_from_series_rising(self, handler):
+        assert handler._trend_from_series(["2.5", "2.1", "1.8"]) == "rising"
+
+    def test_trend_from_series_declining(self, handler):
+        assert handler._trend_from_series(["1.0", "1.5", "2.0"]) == "declining"
+
+    def test_trend_from_series_stable(self, handler):
+        assert handler._trend_from_series(["2.0", "1.9", "2.0"]) == "stable"
+
+    def test_trend_from_series_insufficient(self, handler):
+        assert handler._trend_from_series(["2.0", "1.9"]) == "unknown"
+
+    def test_fetch_geo_level_data_writes_state_and_national(self, handler):
+        from datetime import datetime
+        # fetch_nssp_data returns state rows; fetch_national_row returns US row
+        with patch.object(handler, "fetch_nssp_data", return_value=STATE_ROWS), \
+             patch.object(handler, "fetch_national_row", return_value=NATIONAL_ROW), \
+             patch.object(handler, "store_to_s3") as mock_store:
+            summary = handler.fetch_geo_level_data(
+                active_states=MOCK_STATES,
+                active_diseases=MOCK_DISEASES,
+                nssp_config=MOCK_NSSP_CONFIG,
+                data_bucket="test-bucket",
+                app_token="",
+                today=datetime.utcnow(),
+            )
+            # 1 state record + 1 national record for influenza
+            assert len(summary["written"]) == 2
+            assert mock_store.call_count == 2
+            # Verify the state record shape written
+            state_call = next(
+                c for c in mock_store.call_args_list if "state/texas" in c.args[1]
+            )
+            state_record = state_call.args[0]
+            assert state_record["geo_level"] == "state"
+            assert state_record["geo_id"] == "texas"
+            assert state_record["value"] == 2.5
+            assert state_record["trend"] == "rising"
+            assert state_record["source"] == "cdc_nssp"
+            # Verify the national record shape
+            nat_call = next(
+                c for c in mock_store.call_args_list if "national/national" in c.args[1]
+            )
+            nat_record = nat_call.args[0]
+            assert nat_record["geo_level"] == "national"
+            assert nat_record["value"] == 0.19
+            assert nat_record["trend"] == "rising"  # ed_trends Increasing
+            assert nat_record["name"] == "United States"
+
+    def test_fetch_geo_level_data_state_no_data(self, handler):
+        from datetime import datetime
+        with patch.object(handler, "fetch_nssp_data", return_value=[]), \
+             patch.object(handler, "fetch_national_row", return_value={}), \
+             patch.object(handler, "store_to_s3") as mock_store:
+            summary = handler.fetch_geo_level_data(
+                active_states=MOCK_STATES,
+                active_diseases=MOCK_DISEASES,
+                nssp_config=MOCK_NSSP_CONFIG,
+                data_bucket="test-bucket",
+                app_token="",
+                today=datetime.utcnow(),
+            )
+            assert mock_store.call_count == 0
+            assert len(summary["written"]) == 0

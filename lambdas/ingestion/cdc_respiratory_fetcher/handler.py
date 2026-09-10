@@ -139,6 +139,26 @@ def lambda_handler(event: dict, context: Any) -> dict:
         results["errors"].append(error_msg)
         logger.error(error_msg)
 
+    # --- State + national surveillance records ("zoom out") ---
+    # Writes per-geography records in the same unified shape as county records
+    # so a user can view state- or national-level data. State values come from
+    # the CDC-published state feed (vutn-jzwm); national from the rdmq-nq56
+    # "United States" row. Failures are isolated from the feeds above.
+    try:
+        geo_results = fetch_geo_level_data(
+            active_states=active_states,
+            active_diseases=active_diseases,
+            nssp_config=nssp_config,
+            data_bucket=data_bucket,
+            app_token=app_token,
+            today=today,
+        )
+        results["geo"] = geo_results
+    except Exception as e:
+        error_msg = f"State/national ingestion failed: {str(e)}"
+        results["errors"].append(error_msg)
+        logger.error(error_msg)
+
     return {
         "statusCode": 200 if not results["errors"] else 207,
         "body": json.dumps(results),
@@ -428,12 +448,16 @@ def parse_county_row(
     raw_trend = (row.get(trend_col) or "").strip()
     trend = trend_mapping.get(raw_trend, "unknown")
 
+    county_name = meta.get("county_name", row.get("county", ""))
     return {
         "source": "cdc_nssp_county",
         "dataset_id": "rdmq-nq56",
         "disease": disease_key,
+        "geo_level": "county",
+        "geo_id": fips,
+        "name": county_name,
         "fips": fips,
-        "county_name": meta.get("county_name", row.get("county", "")),
+        "county_name": county_name,
         "state_key": meta.get("state_key", "unknown"),
         "roles": sorted(meta.get("roles", [])),
         "geography": row.get("geography", ""),
@@ -469,3 +493,214 @@ def _year_week_from_week_end(week_end: str, fallback_today: datetime) -> tuple:
     except (ValueError, TypeError):
         dt = fallback_today
     return dt.strftime("%Y"), dt.strftime("%W")
+
+
+# ---------------------------------------------------------------------------
+# State + national surveillance records ("zoom out")
+# ---------------------------------------------------------------------------
+
+
+def _trend_from_series(values: list) -> str:
+    """Derive a trend ('rising'/'declining'/'stable'/'unknown') from a time
+    series ordered MOST-RECENT-FIRST. Mirrors pipeline_coordinator's
+    extract_latest_signal logic so state trend is consistent with metro trend.
+    """
+    nums = [v for v in (_to_float(x) for x in values) if v is not None]
+    if len(nums) < 3:
+        return "unknown"
+    # nums[0] = most recent, nums[2] = 3 periods ago
+    if nums[0] > nums[1] > nums[2]:
+        return "rising"
+    if nums[0] < nums[1] < nums[2]:
+        return "declining"
+    if nums[0] > nums[2]:
+        return "rising"
+    if nums[0] < nums[2]:
+        return "declining"
+    return "stable"
+
+
+def fetch_geo_level_data(
+    active_states: list,
+    active_diseases: list,
+    nssp_config: dict,
+    data_bucket: str,
+    app_token: str,
+    today: datetime,
+) -> dict:
+    """Fetch and store state- and national-level surveillance records.
+
+    State: uses the CDC-published state ED-visit % from vutn-jzwm (long-format
+    state feed), with trend derived from the last 3 weekly points.
+    National: uses the rdmq-nq56 "United States" wide-format row.
+
+    Records use the same unified shape as county records (geo_level/geo_id/
+    name/value/trend/...) and are written to the geo_prefix_pattern layout so
+    downstream code can look up any granularity uniformly.
+    """
+    county_config = get_data_source_config("cdc_nssp_county")
+    geo_pattern = county_config.get("s3_storage", {}).get(
+        "geo_prefix_pattern",
+        "raw/cdc_nssp_geo/{disease}/{year}/W{week}/{level}/{geo_id}.json",
+    )
+    wide_fields = county_config["wide_format_fields"]
+    trend_mapping = county_config["trend_mapping"]
+
+    # State feed (vutn-jzwm) settings from the state-level NSSP config.
+    state_api = nssp_config["api"]
+    state_percent_field = nssp_config.get("key_fields", {}).get("percent", "percent_visits")
+    lookback_days = nssp_config["query_defaults"]["lookback_days"]
+    lookback_date = (today - timedelta(days=lookback_days)).strftime("%Y-%m-%d")
+
+    # Map disease -> state-feed pathogen name (from disease configs).
+    disease_pathogen = {}
+    for disease in active_diseases:
+        src = disease.get("data_sources", {}).get("cdc_nssp")
+        if src and src.get("pathogen_name") and disease["disease_key"] in wide_fields:
+            disease_pathogen[disease["disease_key"]] = src["pathogen_name"]
+
+    summary = {"written": [], "no_data": [], "errors": []}
+
+    def _write(record: dict, level: str, geo_id: str, disease_key: str):
+        year, week = _year_week_from_week_end(record.get("week_end", ""), today)
+        s3_key = geo_pattern.format(
+            disease=disease_key, year=year, week=week, level=level, geo_id=geo_id
+        )
+        try:
+            store_to_s3(record, s3_key, data_bucket)
+            summary["written"].append(s3_key)
+        except Exception as e:
+            summary["errors"].append(f"S3 write failed {s3_key}: {str(e)}")
+            logger.error(f"Geo S3 write failed for {s3_key}: {e}")
+
+    # --- State records (CDC-published state value from vutn-jzwm) ---
+    for state in active_states:
+        state_key = state.get("state_key", "unknown")
+        geo_name = state.get("cdc_geography_name", state.get("state_name", ""))
+        for disease_key, pathogen in disease_pathogen.items():
+            try:
+                rows = fetch_nssp_data(
+                    api_base=state_api["base_url"],
+                    dataset_id=state_api["dataset_id"],
+                    geography=geo_name,
+                    pathogen=pathogen,
+                    date_after=lookback_date,
+                    app_token=app_token,
+                    timeout=state_api["timeout_seconds"],
+                    max_records=state_api["max_records_per_query"],
+                )
+            except Exception as e:
+                summary["errors"].append(f"State fetch {state_key}/{disease_key}: {str(e)}")
+                continue
+
+            if not rows:
+                summary["no_data"].append(f"state/{state_key}/{disease_key}")
+                continue
+
+            # rows ordered week_end DESC; latest is rows[0].
+            latest = rows[0]
+            value = _to_float(latest.get(state_percent_field))
+            if value is None:
+                summary["no_data"].append(f"state/{state_key}/{disease_key}")
+                continue
+            series = [r.get(state_percent_field) for r in rows[:3]]
+            record = {
+                "source": "cdc_nssp",
+                "dataset_id": state_api["dataset_id"],
+                "disease": disease_key,
+                "geo_level": "state",
+                "geo_id": state_key,
+                "name": state.get("state_name", geo_name),
+                "geography": geo_name,
+                "week_end": latest.get("week_end", ""),
+                "value": value,
+                "smoothed_value": None,
+                "trend": _trend_from_series(series),
+                "trend_raw": "",
+                "fetched_at": datetime.utcnow().isoformat(),
+            }
+            _write(record, "state", state_key, disease_key)
+
+    # --- National record (rdmq-nq56 "United States" wide-format row) ---
+    county_api = county_config["api"]
+    fips_field = county_config["query_defaults"].get("fips_field", "fips")
+    week_end_field = county_config["query_defaults"].get("week_end_field", "week_end")
+    try:
+        national_row = fetch_national_row(
+            api_base=county_api["base_url"],
+            dataset_id=county_api["dataset_id"],
+            week_end_field=week_end_field,
+            date_after=lookback_date,
+            app_token=app_token,
+            timeout=county_api["timeout_seconds"],
+            max_records=county_api["max_records_per_query"],
+        )
+    except Exception as e:
+        summary["errors"].append(f"National fetch: {str(e)}")
+        national_row = {}
+
+    if national_row:
+        for disease_key, field_map in wide_fields.items():
+            if disease_key not in disease_pathogen:
+                continue
+            value = _to_float(national_row.get(field_map.get("percent")))
+            if value is None:
+                summary["no_data"].append(f"national/{disease_key}")
+                continue
+            raw_trend = (national_row.get(field_map.get("trend")) or "").strip()
+            record = {
+                "source": "cdc_nssp_county",
+                "dataset_id": county_api["dataset_id"],
+                "disease": disease_key,
+                "geo_level": "national",
+                "geo_id": "national",
+                "name": "United States",
+                "geography": national_row.get("geography", "United States"),
+                "week_end": national_row.get(week_end_field, ""),
+                "value": value,
+                "smoothed_value": _to_float(national_row.get(field_map.get("percent_smoothed"))),
+                "trend": trend_mapping.get(raw_trend, "unknown"),
+                "trend_raw": raw_trend,
+                "fetched_at": datetime.utcnow().isoformat(),
+            }
+            _write(record, "national", "national", disease_key)
+    else:
+        summary["no_data"].append("national")
+
+    return summary
+
+
+def fetch_national_row(
+    api_base: str,
+    dataset_id: str,
+    week_end_field: str,
+    date_after: str,
+    app_token: str = "",
+    timeout: int = 30,
+    max_records: int = 1000,
+) -> dict:
+    """Query the wide-format dataset for the national ('United States') row."""
+    where_clauses = [
+        "geography='United States'",
+        f"{week_end_field} > '{date_after}'",
+    ]
+    params = {
+        "$where": " AND ".join(where_clauses),
+        "$order": f"{week_end_field} DESC",
+        "$limit": str(max_records),
+    }
+    url = f"{api_base}/{dataset_id}.json?{urlencode(params)}"
+    headers = {"Accept": "application/json"}
+    if app_token:
+        headers["X-App-Token"] = app_token
+
+    response = http.request("GET", url, headers=headers, timeout=float(timeout))
+    if response.status == 429:
+        raise RuntimeError("Socrata rate limit exceeded.")
+    if response.status != 200:
+        raise RuntimeError(
+            f"CDC NSSP national API returned {response.status}: "
+            f"{response.data.decode()[:500]}"
+        )
+    rows = json.loads(response.data.decode())
+    return rows[0] if rows else {}

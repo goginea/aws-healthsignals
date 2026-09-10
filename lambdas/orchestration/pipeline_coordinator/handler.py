@@ -575,20 +575,10 @@ def _enrich_with_county_nssp(signal: dict, county_fips: str, disease_key: str) -
         signal["corroborated_by"] = "cdc_nssp_county"
 
 
-def load_latest_county_signal(
-    county_fips: str, disease_key: str, county_config: dict
-) -> Optional[dict]:
-    """Load the latest county-level NSSP signal record from S3.
-
-    Scans raw/cdc_nssp_county/{disease}/... for the most recent week folder
-    and reads {fips}.json. Returns the parsed record or None if absent.
+def _latest_record_under_prefix(base_prefix: str, geo_id: str) -> Optional[dict]:
+    """Walk the most-recent {year}/W{week} folders under base_prefix and read
+    {geo_id}.json. Shared by county/state/national lookups.
     """
-    prefix_pattern = county_config.get("s3_storage", {}).get(
-        "prefix_pattern", "raw/cdc_nssp_county/{disease}/{year}/W{week}/{fips}.json"
-    )
-    # Base prefix up to (and including) the disease segment.
-    base_prefix = prefix_pattern.split("{year}")[0].format(disease=disease_key)
-
     try:
         year_resp = s3_client.list_objects_v2(
             Bucket=DATA_BUCKET, Prefix=base_prefix, Delimiter="/"
@@ -608,43 +598,104 @@ def load_latest_county_signal(
         if not week_prefixes:
             return None
 
-        data_key = f"{week_prefixes[0]}{county_fips}.json"
+        data_key = f"{week_prefixes[0]}{geo_id}.json"
         obj = s3_client.get_object(Bucket=DATA_BUCKET, Key=data_key)
         return json.loads(obj["Body"].read().decode())
 
     except s3_client.exceptions.NoSuchKey:
         return None
     except Exception as e:
-        logger.debug(f"No county NSSP signal for {county_fips}/{disease_key}: {e}")
+        logger.debug(f"No surveillance record at {base_prefix}{geo_id}: {e}")
         return None
 
 
-def _build_county_surveillance_context(
-    county_fips: str, disease_key: str, county_config: Optional[dict]
+def load_latest_surveillance_signal(
+    geo_level: str, geo_id: str, disease_key: str, config: dict
 ) -> Optional[dict]:
-    """Build the county's own measured ED-visit surveillance context for an alert.
+    """Load the latest NSSP surveillance record for a geography from S3.
 
-    Returns a compact dict ({value, trend, week_end, source}) when a
-    county-level NSSP signal exists, else None. Purely additive alert context —
-    it does not affect whether the alert fires or its severity.
+    Supports all granularities so a user can "zoom out":
+      * geo_level="county"  -> raw/cdc_nssp_county/{disease}/{year}/W{week}/{fips}.json
+                               (legacy per-county layout; geo_id = county FIPS)
+      * geo_level in {"state","national"}
+                            -> raw/cdc_nssp_geo/{disease}/{year}/W{week}/{level}/{geo_id}.json
+                               (unified layout; geo_id = state_key or "national")
+
+    County also falls back to the unified geo layout if the legacy path is
+    empty, so callers don't need to care which the fetcher wrote.
     """
-    if not county_config or not county_fips:
+    storage = config.get("s3_storage", {})
+
+    # County: try the legacy per-county layout first.
+    if geo_level == "county":
+        legacy_pattern = storage.get(
+            "prefix_pattern", "raw/cdc_nssp_county/{disease}/{year}/W{week}/{fips}.json"
+        )
+        base_prefix = legacy_pattern.split("{year}")[0].format(disease=disease_key)
+        record = _latest_record_under_prefix(base_prefix, geo_id)
+        if record:
+            return record
+        # fall through to the unified geo layout below
+
+    # Unified geo layout (state/national, and county fallback).
+    geo_pattern = storage.get(
+        "geo_prefix_pattern",
+        "raw/cdc_nssp_geo/{disease}/{year}/W{week}/{level}/{geo_id}.json",
+    )
+    # Base prefix up to (and including) the {level} segment.
+    base_prefix = geo_pattern.split("{year}")[0].format(disease=disease_key)
+    level_prefix = f"{base_prefix}"  # {disease}/ done; append year/week/level at walk time
+    # The geo layout nests level BELOW week, so we must resolve year/week first,
+    # then read {level}/{geo_id}.json. Reuse the walker by treating
+    # "{level}/{geo_id}" as the object suffix.
+    return _latest_record_under_prefix(level_prefix, f"{geo_level}/{geo_id}")
+
+
+def load_latest_county_signal(
+    county_fips: str, disease_key: str, county_config: dict
+) -> Optional[dict]:
+    """Back-compat wrapper: load the latest county-level NSSP signal record."""
+    return load_latest_surveillance_signal(
+        "county", county_fips, disease_key, county_config
+    )
+
+
+def build_surveillance_context(
+    geo_level: str, geo_id: str, disease_key: str, config: Optional[dict]
+) -> Optional[dict]:
+    """Build measured ED-visit surveillance context for a geography.
+
+    Works at county|state|national granularity so alerts (and a future
+    "zoom out" UI) can surface the geography's own numbers. Returns a compact
+    dict or None. Purely additive context — never affects detection/severity.
+    """
+    if not config or not geo_id:
         return None
-    if not county_config.get("enabled", False):
+    if not config.get("enabled", False):
         return None
 
-    record = load_latest_county_signal(county_fips, disease_key, county_config)
+    record = load_latest_surveillance_signal(geo_level, geo_id, disease_key, config)
     if not record:
         return None
 
     return {
+        "geo_level": record.get("geo_level", geo_level),
+        "geo_id": geo_id,
+        "name": record.get("name") or record.get("county_name") or record.get("geography", ""),
         "value": record.get("value"),
         "smoothed_value": record.get("smoothed_value"),
         "trend": record.get("trend", "unknown"),
         "trend_raw": record.get("trend_raw", ""),
         "week_end": record.get("week_end", ""),
-        "source": "cdc_nssp_county",
+        "source": record.get("source", "cdc_nssp_county"),
     }
+
+
+def _build_county_surveillance_context(
+    county_fips: str, disease_key: str, county_config: Optional[dict]
+) -> Optional[dict]:
+    """Back-compat wrapper: county-level surveillance context for an alert."""
+    return build_surveillance_context("county", county_fips, disease_key, county_config)
 
 
 def extract_latest_signal(raw_data: dict) -> tuple:
@@ -764,6 +815,9 @@ def start_alert_generation(county_alert: dict, execution_id: str) -> dict:
         "alert_type": county_alert.get("alert_type", "disease_outbreak"),
         "execution_id": execution_id,
         "external_forecast": county_alert.get("external_forecast"),
+        # County's own measured ED-visit surveillance (may be None when the
+        # county has no NSSP data). The ASL brief includes it only when present.
+        "county_surveillance": county_alert.get("county_surveillance"),
     }
 
     response = sfn_client.start_execution(

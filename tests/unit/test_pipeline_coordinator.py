@@ -70,7 +70,10 @@ class TestPipelineCoordinator:
 MOCK_COUNTY_CONFIG = {
     "enabled": True,
     "priority": "supplemental",
-    "s3_storage": {"prefix_pattern": "raw/cdc_nssp_county/{disease}/{year}/W{week}/{fips}.json"},
+    "s3_storage": {
+        "prefix_pattern": "raw/cdc_nssp_county/{disease}/{year}/W{week}/{fips}.json",
+        "geo_prefix_pattern": "raw/cdc_nssp_geo/{disease}/{year}/W{week}/{level}/{geo_id}.json",
+    },
 }
 
 COUNTY_RECORD_RISING = {
@@ -134,16 +137,121 @@ class TestCountySupplementalEnrichment:
         assert signal == {"value": 2.5, "trend": "unknown"}
 
     def test_build_county_surveillance_context(self, handler):
-        with patch.object(handler, "load_latest_county_signal", return_value=COUNTY_RECORD_RISING):
+        with patch.object(handler, "load_latest_surveillance_signal", return_value=COUNTY_RECORD_RISING):
             ctx = handler._build_county_surveillance_context("48143", "influenza", MOCK_COUNTY_CONFIG)
         assert ctx["value"] == 0.31
         assert ctx["trend"] == "rising"
         assert ctx["source"] == "cdc_nssp_county"
 
     def test_build_county_surveillance_context_none_when_absent(self, handler):
-        with patch.object(handler, "load_latest_county_signal", return_value=None):
+        with patch.object(handler, "load_latest_surveillance_signal", return_value=None):
             ctx = handler._build_county_surveillance_context("48143", "influenza", MOCK_COUNTY_CONFIG)
         assert ctx is None
 
     def test_build_county_surveillance_context_none_when_no_config(self, handler):
         assert handler._build_county_surveillance_context("48143", "influenza", None) is None
+
+
+STATE_RECORD = {
+    "geo_level": "state",
+    "geo_id": "texas",
+    "name": "Texas",
+    "value": 2.5,
+    "smoothed_value": None,
+    "trend": "rising",
+    "trend_raw": "",
+    "week_end": "2026-09-05T00:00:00.000",
+    "source": "cdc_nssp",
+}
+
+NATIONAL_RECORD = {
+    "geo_level": "national",
+    "geo_id": "national",
+    "name": "United States",
+    "value": 0.19,
+    "trend": "rising",
+    "week_end": "2026-09-05T00:00:00.000",
+    "source": "cdc_nssp_county",
+}
+
+
+class TestZoomOutSurveillance:
+    """The generalized resolver supports county|state|national granularity."""
+
+    def test_build_surveillance_context_state(self, handler):
+        with patch.object(handler, "load_latest_surveillance_signal", return_value=STATE_RECORD):
+            ctx = handler.build_surveillance_context("state", "texas", "influenza", MOCK_COUNTY_CONFIG)
+        assert ctx["geo_level"] == "state"
+        assert ctx["geo_id"] == "texas"
+        assert ctx["name"] == "Texas"
+        assert ctx["value"] == 2.5
+        assert ctx["trend"] == "rising"
+
+    def test_build_surveillance_context_national(self, handler):
+        with patch.object(handler, "load_latest_surveillance_signal", return_value=NATIONAL_RECORD):
+            ctx = handler.build_surveillance_context("national", "national", "influenza", MOCK_COUNTY_CONFIG)
+        assert ctx["geo_level"] == "national"
+        assert ctx["name"] == "United States"
+        assert ctx["value"] == 0.19
+
+    def test_build_surveillance_context_none_when_absent(self, handler):
+        with patch.object(handler, "load_latest_surveillance_signal", return_value=None):
+            ctx = handler.build_surveillance_context("state", "texas", "influenza", MOCK_COUNTY_CONFIG)
+        assert ctx is None
+
+    def test_county_wrapper_delegates_to_generalized(self, handler):
+        """load_latest_county_signal must route through the generalized resolver."""
+        with patch.object(handler, "load_latest_surveillance_signal", return_value=STATE_RECORD) as m:
+            handler.load_latest_county_signal("48143", "influenza", MOCK_COUNTY_CONFIG)
+            m.assert_called_once_with("county", "48143", "influenza", MOCK_COUNTY_CONFIG)
+
+
+class TestSfnInputCarriesCountySurveillance:
+    """Option A: county_surveillance must reach the Step Functions input."""
+
+    def test_sfn_input_includes_county_surveillance(self, handler):
+        county_alert = {
+            "county_fips": "48143",
+            "county_name": "Erath County",
+            "disease": "influenza",
+            "detection_week": "202636",
+            "county_surveillance": {"value": 0.31, "trend": "rising", "source": "cdc_nssp_county"},
+        }
+        captured = {}
+
+        class _FakeSfn:
+            def start_execution(self, **kwargs):
+                captured["input"] = kwargs["input"]
+                return {"executionArn": "arn:test", "startDate": __import__("datetime").datetime.utcnow()}
+
+        with patch.object(handler, "STATE_MACHINE_ARN", "arn:aws:states:us-east-1:123:stateMachine:test"), \
+             patch.object(handler, "sfn_client", _FakeSfn()):
+            handler.start_alert_generation(county_alert, "exec-1234-5678")
+
+        payload = json.loads(captured["input"])
+        assert "county_surveillance" in payload
+        assert payload["county_surveillance"]["value"] == 0.31
+        assert payload["county_surveillance"]["trend"] == "rising"
+
+    def test_sfn_input_county_surveillance_null_when_absent(self, handler):
+        county_alert = {
+            "county_fips": "48143",
+            "county_name": "Erath County",
+            "disease": "influenza",
+            "detection_week": "202636",
+        }
+        captured = {}
+
+        class _FakeSfn:
+            def start_execution(self, **kwargs):
+                captured["input"] = kwargs["input"]
+                return {"executionArn": "arn:test", "startDate": __import__("datetime").datetime.utcnow()}
+
+        with patch.object(handler, "STATE_MACHINE_ARN", "arn:aws:states:us-east-1:123:stateMachine:test"), \
+             patch.object(handler, "sfn_client", _FakeSfn()):
+            handler.start_alert_generation(county_alert, "exec-1234-5678")
+
+        payload = json.loads(captured["input"])
+        # Present as an explicit null so the ASL States.JsonToString handles it
+        assert "county_surveillance" in payload
+        assert payload["county_surveillance"] is None
