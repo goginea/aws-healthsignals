@@ -69,37 +69,52 @@ GET https://api.delphi.cmu.edu/epidata/covidcast/?data_source=nssp&signal=pct_ed
 | **CDC Info**         | https://www.cdc.gov/nwss/index.html                            |
 | **Status**           | ✅ Active, ~1,500 sampling sites nationwide                    |
 
-### Datasets (Socrata Identifiers)
+### Dataset (Socrata Identifier)
 
-| Disease            | Dataset ID  | Name                                                                    | Endpoint                                       |
-| ------------------ | ----------- | ----------------------------------------------------------------------- | ---------------------------------------------- |
-| **Influenza A**    | `ymmh-divb` | CDC Wastewater Data for Influenza A                                     | `https://data.cdc.gov/resource/ymmh-divb.json` |
-| **RSV**            | `45cq-cw4i` | CDC Wastewater Data for RSV                                             | `https://data.cdc.gov/resource/45cq-cw4i.json` |
-| **SARS-CoV-2**     | `2ew6-ywp6` | NWSS Public SARS-CoV-2 Wastewater Metric Data                           | `https://data.cdc.gov/resource/2ew6-ywp6.json` |
-| **Avian Flu (H5)** | `mtpu-urpp` | CDC Wastewater Data for Avian Influenza A (H5)                          | `https://data.cdc.gov/resource/mtpu-urpp.json` |
-| **Combined WVAL**  | _(TBD)_     | CDC Wastewater Viral Activity Level for SARS-CoV-2, Influenza A and RSV | Combined dataset with weekly WVAL values       |
+We use a single **unified** NWSS dataset that covers all three pathogens with a
+site-level viral activity level (WVAL) metric:
+
+| Pathogen(s)                      | Dataset ID  | Name                                                                    | Endpoint                                       |
+| -------------------------------- | ----------- | ----------------------------------------------------------------------- | ---------------------------------------------- |
+| **SARS-CoV-2, Influenza A, RSV** | `atcp-73re` | CDC Wastewater Viral Activity Level for SARS-CoV-2, Influenza A and RSV | `https://data.cdc.gov/resource/atcp-73re.json` |
+
+Select the pathogen via the `pathogen_target` field:
+
+| disease_key | `pathogen_target` value |
+| ----------- | ----------------------- |
+| `covid`     | `SARS-CoV-2`            |
+| `influenza` | `Influenza A virus`     |
+| `rsv`       | `RSV`                   |
+
+> **History (2026-09):** CDC changed the upstream NWSS datasets. The prior
+> per-disease datasets used incompatible schemas — `2ew6-ywp6` (SARS-CoV-2
+> metric) worked, but `ymmh-divb` (flu) and `45cq-cw4i` (rsv) were raw
+> lab-sample datasets keyed by `state_territory`/`sample_collect_date` with no
+> jurisdiction summary. Consolidating onto `atcp-73re` gives one consistent
+> schema across all three pathogens.
 
 ### Key Fields
 
-| Field               | Type    | Description                                   |
-| ------------------- | ------- | --------------------------------------------- |
-| `wwtp_jurisdiction` | string  | State abbreviation (e.g., "TX")               |
-| `wwtp_id`           | integer | Unique anonymous plant identifier             |
-| `county_fips`       | string  | 5-digit FIPS code(s) served by this plant     |
-| `county_names`      | string  | County names served                           |
-| `date_start`        | date    | Start of 15-day measurement interval          |
-| `date_end`          | date    | End of 15-day measurement interval            |
-| `ptc_15d`           | float   | Percent change in viral RNA over 15 days      |
-| `detect_prop_15d`   | float   | Proportion of tests with virus detected       |
-| `percentile`        | float   | Percentile vs. historical levels at this site |
-| `activity_level`    | string  | very_low / low / moderate / high / very_high  |
-| `population_served` | integer | Population covered by sampling site           |
+| Field                | Type    | Description                                   |
+| -------------------- | ------- | --------------------------------------------- |
+| `state_territory`    | string  | Full state name (e.g., "Texas")               |
+| `pathogen_target`    | string  | `SARS-CoV-2` / `Influenza A virus` / `RSV`    |
+| `counties_served`    | string  | County name(s) served by this site (not FIPS) |
+| `site`               | string  | Site identifier                               |
+| `week_end`           | date    | End of the reporting week                     |
+| `site_wval`          | float   | Site viral activity level (numeric)           |
+| `site_wval_category` | string  | Very Low / Low / Moderate / High / Very High  |
+| `population_served`  | integer | Population covered by sampling site           |
 
 ### Query Example (SoQL)
 
 ```
-GET https://data.cdc.gov/resource/ymmh-divb.json?$where=wwtp_jurisdiction='TX' AND date_end > '2026-06-01'&$order=date_end DESC&$limit=1000
+GET https://data.cdc.gov/resource/atcp-73re.json?$where=state_territory='Texas' AND pathogen_target='Influenza A virus' AND week_end > '2026-06-01'&$order=week_end DESC&$limit=1000
 ```
+
+> County matching is by **name** (`counties_served`), since this dataset
+> exposes no county FIPS. The fetcher matches against each sentinel metro's
+> configured `county_names`.
 
 ### How We Use It
 
@@ -120,32 +135,40 @@ Wastewater data provides **early signal confirmation** — viral RNA appears in 
 
 ## 3. CDC NSSP ED Visit Proportions (SUPPLEMENTAL — State-level)
 
-| Field                | Value                                                                            |
-| -------------------- | -------------------------------------------------------------------------------- |
-| **Provider**         | CDC National Syndromic Surveillance Program (NSSP)                               |
-| **API**              | Socrata Open Data API (SODA) on `data.cdc.gov`                                   |
-| **Dataset ID**       | `rdmq-nq56`                                                                      |
-| **Name**             | Inpatient, Emergency Department, and Outpatient Visits for Respiratory Illnesses |
-| **Auth**             | None required                                                                    |
-| **Rate Limits**      | Same as NWSS (1K/40K per hour)                                                   |
-| **Update Frequency** | Weekly on Fridays                                                                |
-| **Endpoint**         | `https://data.cdc.gov/resource/rdmq-nq56.json`                                   |
-| **Status**           | ✅ Active                                                                        |
+| Field                | Value                                                           |
+| -------------------- | --------------------------------------------------------------- |
+| **Provider**         | CDC National Syndromic Surveillance Program (NSSP)              |
+| **API**              | Socrata Open Data API (SODA) on `data.cdc.gov`                  |
+| **Dataset ID**       | `vutn-jzwm`                                                     |
+| **Name**             | NSSP Emergency Department Visits - COVID-19, Flu, RSV, Combined |
+| **Auth**             | None required                                                   |
+| **Rate Limits**      | Same as NWSS (1K/40K per hour)                                  |
+| **Update Frequency** | Weekly on Fridays                                               |
+| **Endpoint**         | `https://data.cdc.gov/resource/vutn-jzwm.json`                  |
+| **Status**           | ✅ Active                                                       |
+
+> **History (2026-09):** CDC repurposed the previous dataset ID `rdmq-nq56`
+> into a trajectories/trends table (columns `ed_trends_*`, no `pathogen` or
+> `percent`), which broke the fetcher. Repointed to `vutn-jzwm`, which exposes
+> the state-level ED-visit percentages we need.
 
 ### Key Fields
 
-| Field        | Type   | Description                           |
-| ------------ | ------ | ------------------------------------- |
-| `geography`  | string | State name or "National"              |
-| `pathogen`   | string | "Influenza", "COVID-19", "RSV", "ARI" |
-| `week_end`   | date   | End of epiweek (Saturday)             |
-| `percent`    | float  | % of ED visits for this pathogen      |
-| `visit_type` | string | "ed", "inpatient", "outpatient"       |
+| Field            | Type   | Description                                 |
+| ---------------- | ------ | ------------------------------------------- |
+| `geography`      | string | State name, or "United States" for national |
+| `pathogen`       | string | "Influenza", "COVID-19", "RSV", "Combined"  |
+| `week_end`       | date   | End of epiweek (Saturday)                   |
+| `percent_visits` | float  | % of ED visits for this pathogen            |
+
+> Note: this dataset has **no `visit_type` column** (it is ED-visit
+> percentages by construction), and the national geography label is
+> **"United States"**, not "National".
 
 ### Query Example
 
 ```
-GET https://data.cdc.gov/resource/rdmq-nq56.json?$where=geography='Texas' AND pathogen='Influenza' AND visit_type='ed' AND week_end > '2026-01-01'&$order=week_end DESC&$limit=100
+GET https://data.cdc.gov/resource/vutn-jzwm.json?$where=geography='Texas' AND pathogen='Influenza' AND week_end > '2026-01-01'&$order=week_end DESC&$limit=100
 ```
 
 ### How We Use It

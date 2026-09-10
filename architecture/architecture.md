@@ -441,9 +441,9 @@ config/
 │   ├── texas.json       # 4 metros, 3 sample counties
 │   └── _template.json   # Copy to add new state
 ├── diseases/            # Per-disease: thresholds, signals, Socrata IDs
-│   ├── influenza.json   # 1.0% threshold, ymmh-divb wastewater
-│   ├── rsv.json         # 0.5% threshold, 45cq-cw4i wastewater
-│   ├── covid.json       # 0.3% threshold, 2ew6-ywp6 wastewater
+│   ├── influenza.json   # 1.0% threshold, atcp-73re wastewater (Influenza A virus)
+│   ├── rsv.json         # 0.5% threshold, atcp-73re wastewater (RSV)
+│   ├── covid.json       # 0.3% threshold, atcp-73re wastewater (SARS-CoV-2)
 │   └── _template.json   # Copy to add new disease
 ├── forecast_providers/  # FluSight, RSV Hub, custom model configs
 ├── shortage_monitoring/ # Drug shortage monitoring config

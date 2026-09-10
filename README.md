@@ -68,7 +68,7 @@ See [docs/CONFIGURATION.md](docs/CONFIGURATION.md) for the full config reference
 | -------------------------- | ------------------------------------------------- | ------------------------------------------- | ---------------- |
 | **CMU Delphi Epidata**     | `api.delphi.cmu.edu/epidata/covidcast/`           | County-level % ED visits (flu, RSV, COVID)  | Weekly (Mon)     |
 | **CDC NWSS Wastewater**    | `data.cdc.gov/resource/{id}.json`                 | Wastewater viral activity (Flu, RSV, COVID) | Weekly (Mon)     |
-| **CDC NSSP Respiratory**   | `data.cdc.gov/resource/rdmq-nq56.json`            | State-level % ED visits                     | Weekly (Mon)     |
+| **CDC NSSP Respiratory**   | `data.cdc.gov/resource/vutn-jzwm.json`            | State-level % ED visits                     | Weekly (Mon)     |
 | **CDC Outbreaks RSS**      | `tools.cdc.gov/api/v2/resources/media/285676.rss` | Foodborne/parasitic outbreak investigations | Daily (8 AM UTC) |
 | **openFDA Drug Shortages** | `api.fda.gov/drug/shortages.json`                 | Drug shortage status and details            | Weekly (Mon)     |
 | **CDC FluSight Ensemble**  | FluSight Hub API                                  | National/state flu forecasts                | Weekly (Wed)     |
