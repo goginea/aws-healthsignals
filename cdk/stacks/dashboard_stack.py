@@ -194,12 +194,19 @@ class DashboardStack(Stack):
         )
 
         # --- API Gateway with Cognito authorizer ---
+        # cloud_watch_role=False: AWS::ApiGateway::Account is an account+region
+        # singleton that holds the shared API Gateway CloudWatch Logs role. The
+        # core Subscription stack owns it (cloud_watch_role defaults to True
+        # there); if this stack also created one, whichever deployed last would
+        # overwrite the singleton and put the other stack into perpetual drift.
+        # Deferring to the Subscription stack's role keeps both stacks in sync.
         self.api = apigw.RestApi(
             self,
             "DashboardApi",
             rest_api_name="healthsignals-dashboard",
             description="HealthSignals admin dashboard read API (Cognito-protected)",
             deploy_options=apigw.StageOptions(stage_name="prod"),
+            cloud_watch_role=False,
             default_cors_preflight_options=apigw.CorsOptions(
                 allow_origins=[cf_origin],
                 allow_methods=["GET", "POST", "OPTIONS"],
