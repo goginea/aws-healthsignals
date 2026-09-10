@@ -23,6 +23,7 @@ from stacks.orchestration_stack import OrchestrationStack
 from stacks.delivery_stack import DeliveryStack
 from stacks.subscription_stack import SubscriptionStack
 from stacks.monitoring_stack import MonitoringStack
+from stacks.dashboard_stack import DashboardStack
 
 app = cdk.App()
 
@@ -161,5 +162,15 @@ if enable_forecast_providers:
     forecast_providers.add_dependency(ingestion)   # Needs S3 bucket
     forecast_providers.add_dependency(prediction)  # Table must exist before fetchers write
     forecast_providers.add_dependency(monitoring)  # Needs ops topic
+
+# --- Admin Dashboard (always deployed; reproducible admin console) ---
+dashboard = DashboardStack(
+    app,
+    "HealthSignals-Dashboard",
+    admin_email=app.node.try_get_context("dashboard_admin_email") or "",
+    env=env,
+)
+# Depends on monitoring so the core stacks it reports on exist first.
+dashboard.add_dependency(monitoring)
 
 app.synth()
