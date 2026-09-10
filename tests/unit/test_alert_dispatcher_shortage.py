@@ -282,3 +282,57 @@ class TestCombinedAlertType:
 
         assert result["alert_type"] == "combined"
         assert result["success"] is True
+
+
+def _bedrock_result(text):
+    """Shape the Step Functions state stores after a Bedrock InvokeModel step."""
+    return {"Body": {"content": [{"text": text}]}, "ContentType": "application/json"}
+
+
+class TestBriefExtraction:
+    """Regression: the Bedrock brief must reach the email body even though the
+    Step Functions workflow does NOT pre-build alert_content (it passes the
+    whole state with the brief under shortage_brief_result / combined_brief_result).
+    """
+
+    def test_extract_from_shortage_brief_result(self, shortage_module):
+        event = {"shortage_brief_result": _bedrock_result("ANTIVIRAL SHORTAGE BRIEF body text")}
+        assert "ANTIVIRAL SHORTAGE BRIEF" in shortage_module._extract_brief_text(event)
+
+    def test_extract_from_combined_brief_result(self, shortage_module):
+        event = {"combined_brief_result": _bedrock_result("COMBINED disease+shortage brief")}
+        assert "COMBINED disease+shortage brief" in shortage_module._extract_brief_text(event)
+
+    def test_extract_handles_body_as_json_string(self, shortage_module):
+        event = {"shortage_brief_result": {"Body": json.dumps({"content": [{"text": "stringified body"}]})}}
+        assert shortage_module._extract_brief_text(event) == "stringified body"
+
+    def test_extract_returns_empty_when_absent(self, shortage_module):
+        assert shortage_module._extract_brief_text({"alert_type": "shortage"}) == ""
+
+    def test_email_body_populated_from_brief_when_no_alert_content(self, shortage_module):
+        """The core regression: no alert_content, but a real brief -> non-empty email."""
+        sub = _make_shortage_subscriber()
+        mocks = shortage_module._test_mocks
+        mocks["sub_table"].query.return_value = {"Items": [sub]}
+        mocks["ses"].reset_mock()
+
+        brief = "# ANTIVIRAL SHORTAGE SITUATION BRIEF\nOseltamivir shortage this week."
+        event = {
+            "alert_type": "shortage",
+            "therapeutic_category": "Antivirals",
+            "product_id": "FDA-9",
+            "week_timestamp": "2026-W37",
+            # NOTE: no alert_content key at all — mirrors the real SFN state
+            "shortage_brief_result": _bedrock_result(brief),
+        }
+
+        with patch("shared.token_utils.generate_unsubscribe_url", return_value="https://unsub.test"):
+            result = shortage_module.dispatch_shortage_alert(event, "shortage")
+
+        assert result["total_dispatched"] == 1
+        # The SES email body must contain the actual brief, not just the disclaimer
+        sent = mocks["ses"].send_email.call_args[1]
+        body_text = sent["Message"]["Body"]["Text"]["Data"]
+        assert "ANTIVIRAL SHORTAGE SITUATION BRIEF" in body_text
+        assert "Oseltamivir shortage this week." in body_text

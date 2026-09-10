@@ -66,6 +66,37 @@ def register(context: dict) -> dict[str, callable]:
     }
 
 
+def _extract_brief_text(event: dict) -> str:
+    """Pull the Bedrock-generated brief text out of the Step Functions state.
+
+    The shortage workflow stores its brief under one of these keys depending on
+    the alert type:
+      * standalone shortage  -> event["shortage_brief_result"]
+      * combined disease+shortage -> event["combined_brief_result"]
+
+    Each is the Bedrock InvokeModel response: {"Body": {"content": [{"text": ...}]}}.
+    The Body may occasionally arrive as a JSON string, so handle both. Returns
+    the brief text, or "" if none is present.
+    """
+    for key in ("shortage_brief_result", "combined_brief_result"):
+        result = event.get(key)
+        if not isinstance(result, dict):
+            continue
+        body = result.get("Body")
+        if isinstance(body, str):
+            try:
+                body = json.loads(body)
+            except (json.JSONDecodeError, TypeError):
+                body = {}
+        if not isinstance(body, dict):
+            continue
+        content = body.get("content") or [{}]
+        text = content[0].get("text", "") if content else ""
+        if text:
+            return text
+    return ""
+
+
 def dispatch_shortage_alert(event: dict, alert_type: str) -> dict:
     """Deliver shortage or combined alerts filtered by therapeutic category subscription.
 
@@ -77,9 +108,19 @@ def dispatch_shortage_alert(event: dict, alert_type: str) -> dict:
     from shared.token_utils import generate_unsubscribe_url
 
     therapeutic_category = event.get("therapeutic_category")
-    alert_content = event.get("alert_content", {})
+    alert_content = event.get("alert_content") or {}
     product_id = event.get("product_id")
     week_timestamp = event.get("week_timestamp")
+
+    # The Step Functions workflow passes the whole state ("Payload.$": "$") and
+    # does NOT pre-build alert_content — the Bedrock-generated brief lives in
+    # shortage_brief_result (standalone) or combined_brief_result (combined).
+    # If no body was provided, derive it from those results so the email/SMS
+    # carry the actual brief instead of an empty body (mirrors outbreak_dispatch).
+    if not (alert_content.get("email_body") or alert_content.get("situation_brief")):
+        derived = _extract_brief_text(event)
+        if derived:
+            alert_content = {**alert_content, "email_body": derived}
 
     logger.info(json.dumps({
         "event_type": "shortage_alert_dispatch_start",
