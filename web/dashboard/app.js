@@ -285,12 +285,18 @@
       if (/^\s*([-*_])\1{2,}\s*$/.test(block)) {
         return "<hr>";
       }
-      // Heading: a block that is a single # .. ###### line.
-      const h = block.match(/^(#{1,6})\s+(.*)$/);
-      if (h && lines.length === 1) {
-        const level = Math.min(h[1].length, 6);
+      // Headings: render each # .. ###### line as its own heading. Handles a
+      // block that is one heading OR several stacked headings with no blank
+      // line between them (e.g. a "# Title\n## Subtitle" brief header).
+      const headingLine = (l) => {
+        const m = l.match(/^(#{1,6})\s+(.*)$/);
+        if (!m) return null;
+        const level = Math.min(m[1].length, 6);
         const size = level <= 2 ? "text-base font-bold" : "text-sm font-semibold";
-        return `<h${level} class="${size} text-slate-800 mt-1">${inline(h[2])}</h${level}>`;
+        return `<h${level} class="${size} text-slate-800 mt-1">${inline(m[2])}</h${level}>`;
+      };
+      if (nonEmpty.length > 0 && nonEmpty.every((l) => headingLine(l))) {
+        return nonEmpty.map(headingLine).join("");
       }
       // GFM table: header row, a |---|---| separator, then body rows.
       if (nonEmpty.length >= 2 && /\|/.test(nonEmpty[0]) && /^\s*\|?[\s:|-]+\|?\s*$/.test(nonEmpty[1]) && /-/.test(nonEmpty[1])) {
@@ -316,8 +322,21 @@
         const inner = nonEmpty.map((l) => inline(l.replace(/^\s*&gt;\s?/, ""))).join("<br>");
         return `<blockquote class="border-l-4 border-slate-300 pl-3 text-slate-600 italic">${inner}</blockquote>`;
       }
-      // Paragraph: join wrapped lines with <br>.
-      return `<p>${lines.map(inline).join("<br>")}</p>`;
+      // Paragraph (possibly with a stray heading line mixed in). Emit any
+      // heading line as its own heading and group the surrounding prose lines
+      // into <p>…<br>…</p> runs, so a heading is never glued to body text.
+      let out = "";
+      let para = [];
+      const flush = () => {
+        if (para.length) { out += `<p>${para.map(inline).join("<br>")}</p>`; para = []; }
+      };
+      for (const l of lines) {
+        const hl = headingLine(l);
+        if (hl) { flush(); out += hl; }
+        else if (l.trim() !== "") { para.push(l); }
+      }
+      flush();
+      return out;
     }).join("");
     return html;
   }
