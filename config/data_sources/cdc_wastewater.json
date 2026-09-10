@@ -18,23 +18,20 @@
 
   "query_defaults": {
     "lookback_days": 30,
-    "order_by": "date_end DESC",
-    "state_field": "wwtp_jurisdiction",
-    "date_field": "date_end",
-    "county_fips_field": "county_fips"
+    "order_by": "week_end DESC",
+    "state_field": "state_territory",
+    "date_field": "week_end",
+    "pathogen_field": "pathogen_target",
+    "county_names_field": "counties_served"
   },
 
   "key_fields": {
-    "signal_value": "ptc_15d",
-    "detection_proportion": "detect_prop_15d",
-    "activity_level": "activity_level",
-    "percentile": "percentile",
+    "signal_value": "site_wval",
+    "activity_level": "site_wval_category",
     "population": "population_served",
-    "county_fips": "county_fips",
-    "county_names": "county_names",
-    "plant_id": "wwtp_id",
-    "date_start": "date_start",
-    "date_end": "date_end"
+    "county_names": "counties_served",
+    "site_id": "site",
+    "date_end": "week_end"
   },
 
   "s3_storage": {
@@ -47,6 +44,7 @@
     "coverage": "~1,500 sampling sites nationwide",
     "early_signal": "Viral RNA appears in wastewater 4-6 days before clinical cases increase",
     "limitation": "Not all counties have wastewater sampling sites",
-    "validated": "2026-07-02"
+    "dataset_note": "Consolidated onto the unified dataset atcp-73re (CDC Wastewater Viral Activity Level for SARS-CoV-2, Influenza A and RSV), which covers all three pathogens with a site-level viral activity metric (site_wval / site_wval_category). Replaces the prior per-disease datasets: covid metric dataset 2ew6-ywp6 plus the raw-sample datasets ymmh-divb (flu) and 45cq-cw4i (rsv), which used incompatible schemas. State field is the full state name (state_territory); counties are matched by name via counties_served (this dataset exposes no county FIPS).",
+    "validated": "2026-09-09"
   }
 }

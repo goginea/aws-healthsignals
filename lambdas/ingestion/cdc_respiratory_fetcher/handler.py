@@ -51,7 +51,8 @@ def lambda_handler(event: dict, context: Any) -> dict:
     timeout = nssp_config["api"]["timeout_seconds"]
     max_records = nssp_config["api"]["max_records_per_query"]
     lookback_days = nssp_config["query_defaults"]["lookback_days"]
-    visit_type = nssp_config["query_defaults"]["visit_type_filter"]
+    # Percentage field name in the dataset (vutn-jzwm uses "percent_visits").
+    percent_field = nssp_config.get("key_fields", {}).get("percent", "percent_visits")
     always_include = nssp_config["query_defaults"]["always_include_geographies"]
 
     today = datetime.utcnow()
@@ -85,7 +86,6 @@ def lambda_handler(event: dict, context: Any) -> dict:
                     dataset_id=dataset_id,
                     geography=geo,
                     pathogen=pathogen,
-                    visit_type=visit_type,
                     date_after=lookback_date,
                     app_token=app_token,
                     timeout=timeout,
@@ -98,7 +98,7 @@ def lambda_handler(event: dict, context: Any) -> dict:
                     "disease_key": pathogen_info["disease_key"],
                     "records": len(records),
                     "latest_week": records[0].get("week_end", "N/A") if records else "N/A",
-                    "latest_percent": records[0].get("percent", "N/A") if records else "N/A",
+                    "latest_percent": records[0].get(percent_field, "N/A") if records else "N/A",
                 })
 
             except Exception as e:
@@ -129,17 +129,19 @@ def fetch_nssp_data(
     dataset_id: str,
     geography: str,
     pathogen: str,
-    visit_type: str,
     date_after: str,
     app_token: str = "",
     timeout: int = 30,
     max_records: int = 1000,
 ) -> list:
-    """Query CDC NSSP Socrata dataset."""
+    """Query CDC NSSP Socrata dataset (vutn-jzwm).
+
+    Schema: geography, pathogen, percent_visits, week_end. There is no
+    visit_type column (the dataset is ED-visit percentages by construction).
+    """
     where_clauses = [
         f"geography='{geography}'",
         f"pathogen='{pathogen}'",
-        f"visit_type='{visit_type}'",
         f"week_end > '{date_after}'",
     ]
     params = {

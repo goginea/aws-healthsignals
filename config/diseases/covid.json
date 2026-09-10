@@ -18,8 +18,9 @@
       "smoothed_signal": "smoothed_pct_ed_visits_covid"
     },
     "cdc_wastewater": {
-      "socrata_dataset_id": "2ew6-ywp6",
-      "dataset_name": "NWSS Public SARS-CoV-2 Wastewater Metric Data"
+      "socrata_dataset_id": "atcp-73re",
+      "dataset_name": "CDC Wastewater Viral Activity Level for SARS-CoV-2, Influenza A and RSV",
+      "pathogen_target": "SARS-CoV-2"
     },
     "cdc_nssp": {
       "pathogen_name": "COVID-19"

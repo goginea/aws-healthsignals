@@ -7,7 +7,7 @@
 
   "api": {
     "base_url": "https://data.cdc.gov/resource",
-    "dataset_id": "rdmq-nq56",
+    "dataset_id": "vutn-jzwm",
     "auth_type": "socrata_app_token",
     "app_token_env_var": "CDC_SOCRATA_APP_TOKEN",
     "rate_limit_per_hour_unauthenticated": 1000,
@@ -21,16 +21,14 @@
     "order_by": "week_end DESC",
     "geography_field": "geography",
     "pathogen_field": "pathogen",
-    "visit_type_filter": "ed",
-    "always_include_geographies": ["National"]
+    "always_include_geographies": ["United States"]
   },
 
   "key_fields": {
     "geography": "geography",
     "pathogen": "pathogen",
     "week_end": "week_end",
-    "percent": "percent",
-    "visit_type": "visit_type"
+    "percent": "percent_visits"
   },
 
   "activity_level_thresholds": {
@@ -48,6 +46,7 @@
     "sla": "CDC-operated, high reliability",
     "update_frequency": "Weekly on Fridays",
     "relationship_to_delphi": "Same underlying NSSP data but state-level only (not MSA). Used for state context and as Delphi API redundancy.",
-    "validated": "2026-07-02"
+    "dataset_note": "Repointed from rdmq-nq56 (CDC repurposed that ID into a trajectories/trends table) to vutn-jzwm (NSSP ED Visits - COVID-19/Flu/RSV/Combined), which exposes geography + pathogen + percent_visits + week_end. National geography label is 'United States'. There is no visit_type column.",
+    "validated": "2026-09-09"
   }
 }

@@ -18,8 +18,9 @@
       "smoothed_signal": "smoothed_pct_ed_visits_rsv"
     },
     "cdc_wastewater": {
-      "socrata_dataset_id": "45cq-cw4i",
-      "dataset_name": "CDC Wastewater Data for RSV"
+      "socrata_dataset_id": "atcp-73re",
+      "dataset_name": "CDC Wastewater Viral Activity Level for SARS-CoV-2, Influenza A and RSV",
+      "pathogen_target": "RSV"
     },
     "cdc_nssp": {
       "pathogen_name": "RSV"

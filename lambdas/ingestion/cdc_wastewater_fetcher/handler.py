@@ -34,10 +34,13 @@ def lambda_handler(event: dict, context: Any) -> dict:
     """Fetch CDC NWSS wastewater data for all active diseases and states.
 
     Dynamically reads:
-    - Socrata dataset IDs → from disease configs (data_sources.cdc_wastewater)
-    - State abbreviations → from state configs (state_abbreviation)
-    - Metro county FIPS → from state configs (sentinel_metros.*.county_fips)
+    - Socrata dataset ID + pathogen_target → from disease configs (data_sources.cdc_wastewater)
+    - Full state names → from state configs (state_name)
+    - Metro county names → from state configs (sentinel_metros.*.county_names)
     - API settings → from data_sources/cdc_wastewater.json
+
+    Uses the unified CDC dataset atcp-73re (viral activity level for
+    SARS-CoV-2, Influenza A, and RSV), keyed by full state name and pathogen.
     """
     system = get_system_config()
     ww_config = get_data_source_config("cdc_wastewater")
@@ -54,7 +57,8 @@ def lambda_handler(event: dict, context: Any) -> dict:
     lookback_days = ww_config["query_defaults"]["lookback_days"]
     state_field = ww_config["query_defaults"]["state_field"]
     date_field = ww_config["query_defaults"]["date_field"]
-    fips_field = ww_config["query_defaults"]["county_fips_field"]
+    pathogen_field = ww_config["query_defaults"]["pathogen_field"]
+    county_names_field = ww_config["query_defaults"]["county_names_field"]
 
     today = datetime.utcnow()
     lookback_date = (today - timedelta(days=lookback_days)).strftime("%Y-%m-%d")
@@ -68,26 +72,31 @@ def lambda_handler(event: dict, context: Any) -> dict:
             continue
 
         dataset_id = ww_source["socrata_dataset_id"]
+        pathogen_target = ww_source.get("pathogen_target")
+        if not pathogen_target:
+            logger.info(f"Skipping {disease['disease_key']} — no pathogen_target configured")
+            continue
 
         for state in active_states:
-            state_abbrev = state["state_abbreviation"]
+            # atcp-73re keys state by full name (e.g. "Texas"), not abbreviation.
+            state_name = state.get("state_name", state.get("state_abbreviation"))
 
-            # Collect all metro county FIPS for this state
-            all_metro_fips = []
-            metro_fips_map = {}
+            # Collect all metro county NAMES for this state (dataset exposes
+            # counties_served by name, not FIPS).
+            metro_name_map = {}
             for msa_code, metro_info in state.get("sentinel_metros", {}).items():
-                county_fips = metro_info.get("county_fips", [])
-                all_metro_fips.extend(county_fips)
-                for fips in county_fips:
-                    metro_fips_map[fips] = metro_info.get("short_name", msa_code)
+                for cname in metro_info.get("county_names", []):
+                    metro_name_map[cname.strip().lower()] = metro_info.get("short_name", msa_code)
 
             try:
                 records = fetch_wastewater_data(
                     api_base=api_base,
                     dataset_id=dataset_id,
-                    state_abbrev=state_abbrev,
+                    state_value=state_name,
+                    pathogen_target=pathogen_target,
                     date_after=lookback_date,
                     state_field=state_field,
+                    pathogen_field=pathogen_field,
                     date_field=date_field,
                     app_token=app_token,
                     timeout=timeout,
@@ -95,9 +104,9 @@ def lambda_handler(event: dict, context: Any) -> dict:
                     max_records=max_records,
                 )
 
-                # Filter to metro counties
+                # Filter to metro counties by county name
                 metro_records = filter_to_metro_counties(
-                    records, all_metro_fips, metro_fips_map, fips_field
+                    records, metro_name_map, county_names_field
                 )
 
                 # Store to S3
@@ -113,14 +122,14 @@ def lambda_handler(event: dict, context: Any) -> dict:
 
                 results["fetched"].append({
                     "disease": disease["disease_key"],
-                    "state": state_abbrev,
+                    "state": state_name,
                     "dataset_id": dataset_id,
                     "total_records": len(records),
                     "metro_records": len(metro_records),
                 })
 
             except Exception as e:
-                error_msg = f"Failed {disease['disease_key']}/{state_abbrev}: {str(e)}"
+                error_msg = f"Failed {disease['disease_key']}/{state.get('state_abbreviation')}: {str(e)}"
                 results["errors"].append(error_msg)
                 logger.error(error_msg)
 
@@ -133,22 +142,35 @@ def lambda_handler(event: dict, context: Any) -> dict:
 def fetch_wastewater_data(
     api_base: str,
     dataset_id: str,
-    state_abbrev: str,
+    state_value: str,
+    pathogen_target: str,
     date_after: str,
     state_field: str,
+    pathogen_field: str,
     date_field: str,
     app_token: str = "",
     timeout: int = 30,
     pagination_limit: int = 10000,
     max_records: int = 100000,
 ) -> list:
-    """Query the CDC Socrata SODA API with pagination."""
+    """Query the CDC Socrata SODA API (atcp-73re) with pagination.
+
+    Filters by full state name, pathogen_target, and a date lower bound.
+    """
     all_records = []
     offset = 0
 
+    # Escape single quotes in string literals for SoQL safety.
+    state_lit = state_value.replace("'", "''")
+    pathogen_lit = pathogen_target.replace("'", "''")
+
     while True:
         params = {
-            "$where": f"{state_field}='{state_abbrev}' AND {date_field} > '{date_after}'",
+            "$where": (
+                f"{state_field}='{state_lit}' AND "
+                f"{pathogen_field}='{pathogen_lit}' AND "
+                f"{date_field} > '{date_after}'"
+            ),
             "$limit": str(pagination_limit),
             "$offset": str(offset),
             "$order": f"{date_field} DESC",
@@ -181,20 +203,24 @@ def fetch_wastewater_data(
 
 def filter_to_metro_counties(
     records: list,
-    metro_fips: list[str],
-    metro_fips_map: dict[str, str],
-    fips_field: str,
+    metro_name_map: dict[str, str],
+    county_names_field: str,
 ) -> list:
-    """Filter records to those serving sentinel metro counties."""
+    """Filter records to those serving sentinel metro counties, by county name.
+
+    The atcp-73re dataset reports counties by name in ``counties_served``
+    (a single name or a comma-separated list), not by FIPS. Match case-
+    insensitively against the configured metro county names.
+    """
     metro_records = []
     for record in records:
-        county_fips_str = record.get(fips_field, "")
-        if not county_fips_str:
+        counties_str = record.get(county_names_field, "")
+        if not counties_str:
             continue
-        record_fips = [f.strip() for f in str(county_fips_str).split(",")]
-        matched = [f for f in record_fips if f in metro_fips]
+        record_counties = [c.strip().lower() for c in str(counties_str).split(",")]
+        matched = [c for c in record_counties if c in metro_name_map]
         if matched:
-            record["_matched_metro"] = metro_fips_map.get(matched[0], "unknown")
+            record["_matched_metro"] = metro_name_map.get(matched[0], "unknown")
             metro_records.append(record)
     return metro_records
 

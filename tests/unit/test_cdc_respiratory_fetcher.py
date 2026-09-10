@@ -10,15 +10,20 @@ MOCK_SYSTEM = {"infrastructure": {"data_bucket_name_pattern": "healthsignals-dat
 MOCK_NSSP_CONFIG = {
     "api": {
         "base_url": "https://data.cdc.gov/resource",
-        "dataset_id": "rdmq-nq56",
+        "dataset_id": "vutn-jzwm",
         "app_token_env_var": "CDC_SOCRATA_APP_TOKEN",
         "timeout_seconds": 30,
         "max_records_per_query": 1000,
     },
     "query_defaults": {
         "lookback_days": 60,
-        "visit_type_filter": "ed",
-        "always_include_geographies": ["National"],
+        "always_include_geographies": ["United States"],
+    },
+    "key_fields": {
+        "geography": "geography",
+        "pathogen": "pathogen",
+        "week_end": "week_end",
+        "percent": "percent_visits",
     },
     "s3_storage": {"prefix_pattern": "raw/cdc_nssp/{year}/W{week}/respiratory_activity.json"},
 }
@@ -48,7 +53,7 @@ class TestRespiratoryFetcher:
         assert callable(handler.fetch_nssp_data)
 
     def test_handler_success(self, handler):
-        mock_records = [{"geography": "Texas", "pathogen": "Influenza", "percent": "2.5", "week_end": "2026-06-21"}]
+        mock_records = [{"geography": "Texas", "pathogen": "Influenza", "percent_visits": "2.5", "week_end": "2026-06-21"}]
         with patch.object(handler, "fetch_nssp_data", return_value=mock_records), \
              patch.object(handler, "store_to_s3"):
             result = handler.lambda_handler({}, None)

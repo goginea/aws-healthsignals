@@ -18,8 +18,9 @@
       "smoothed_signal": "smoothed_pct_ed_visits_influenza"
     },
     "cdc_wastewater": {
-      "socrata_dataset_id": "ymmh-divb",
-      "dataset_name": "CDC Wastewater Data for Influenza A"
+      "socrata_dataset_id": "atcp-73re",
+      "dataset_name": "CDC Wastewater Viral Activity Level for SARS-CoV-2, Influenza A and RSV",
+      "pathogen_target": "Influenza A virus"
     },
     "cdc_nssp": {
       "pathogen_name": "Influenza"

@@ -17,14 +17,18 @@ MOCK_WW_CONFIG = {
     },
     "query_defaults": {
         "lookback_days": 30,
-        "state_field": "wwtp_jurisdiction",
-        "date_field": "date_end",
-        "county_fips_field": "county_fips",
+        "state_field": "state_territory",
+        "date_field": "week_end",
+        "pathogen_field": "pathogen_target",
+        "county_names_field": "counties_served",
     },
     "s3_storage": {"prefix_pattern": "raw/cdc_wastewater/{disease}/{year}/W{week}/data.json"},
 }
-MOCK_STATES = [{"state_key": "texas", "state_abbreviation": "TX", "sentinel_metros": {"26420": {"county_fips": ["48201"], "short_name": "Houston"}}}]
-MOCK_DISEASES = [{"disease_key": "influenza", "data_sources": {"cdc_wastewater": {"socrata_dataset_id": "ymmh-divb"}}}]
+MOCK_STATES = [{
+    "state_key": "texas", "state_name": "Texas", "state_abbreviation": "TX",
+    "sentinel_metros": {"26420": {"county_names": ["Harris"], "county_fips": ["48201"], "short_name": "Houston"}},
+}]
+MOCK_DISEASES = [{"disease_key": "influenza", "data_sources": {"cdc_wastewater": {"socrata_dataset_id": "atcp-73re", "pathogen_target": "Influenza A virus"}}}]
 
 
 @pytest.fixture(scope="module")
@@ -52,24 +56,25 @@ class TestWastewaterFetcher:
         assert callable(handler.filter_to_metro_counties)
 
     def test_handler_success(self, handler):
-        mock_records = [{"county_fips": "48201", "ptc_15d": "5.2", "date_end": "2026-06-20"}]
+        mock_records = [{"counties_served": "Harris", "site_wval": "1.9", "week_end": "2026-08-29"}]
         with patch.object(handler, "fetch_wastewater_data", return_value=mock_records), \
              patch.object(handler, "filter_to_metro_counties", return_value=mock_records), \
              patch.object(handler, "store_to_s3"):
             result = handler.lambda_handler({}, None)
             assert result["statusCode"] in (200, 207)
 
-    def test_filter_includes_matching_fips(self, handler):
+    def test_filter_includes_matching_county_name(self, handler):
         records = [
-            {"county_fips": "48201", "value": "3.2"},
-            {"county_fips": "99999", "value": "1.0"},
+            {"counties_served": "Harris", "site_wval": "3.2"},
+            {"counties_served": "Nowhere", "site_wval": "1.0"},
         ]
-        # Updated signature: filter_to_metro_counties(records, metro_fips, metro_fips_map, fips_field)
-        filtered = handler.filter_to_metro_counties(records, ["48201"], {"48201": "Houston"}, "county_fips")
-        # Should return only records matching metro county FIPS
+        # New signature: filter_to_metro_counties(records, metro_name_map, county_names_field)
+        # metro_name_map keys are lowercased county names.
+        filtered = handler.filter_to_metro_counties(records, {"harris": "Houston"}, "counties_served")
         assert isinstance(filtered, list)
         assert len(filtered) == 1
-        assert filtered[0]["county_fips"] == "48201"
+        assert filtered[0]["counties_served"] == "Harris"
+        assert filtered[0]["_matched_metro"] == "Houston"
 
     def test_handler_api_error(self, handler):
         with patch.object(handler, "fetch_wastewater_data", side_effect=RuntimeError("429 rate limit")), \
