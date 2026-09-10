@@ -27,8 +27,13 @@ logger.setLevel(os.environ.get("LOG_LEVEL", "INFO"))
 
 cfn = boto3.client("cloudformation")
 sfn = boto3.client("stepfunctions")
+s3 = boto3.client("s3")
 
 ALLOWED_ORIGIN = os.environ.get("ALLOWED_ORIGIN", "*")
+# Data bucket + config prefix hold system.json and data_sources/*.json, read to
+# surface each pipeline's live data sources and Bedrock model.
+CONFIG_BUCKET = os.environ.get("CONFIG_BUCKET", "")
+CONFIG_PREFIX = os.environ.get("CONFIG_PREFIX", "config/")
 
 # Core stacks are always present; plugin stacks may or may not be deployed.
 CORE_STACKS = [
@@ -196,12 +201,36 @@ def _recent_runs(state_machine_name: str, limit: int = 5) -> list:
     return runs
 
 
+# Which data-source config files (by source_name) feed each pipeline. The
+# dashboard reads these from S3 to show what actually powers each pipeline
+# instead of a static step diagram.
+PIPELINE_DATA_SOURCES = {
+    "core": ["delphi", "cdc_nssp", "cdc_nssp_county", "cdc_wastewater"],
+    "drug_shortage": ["openfda_drug_shortages"],
+    "cdc_outbreak": ["cdc_outbreaks_rss"],
+    "forecast_providers": [],
+}
+
+
 def get_pipelines() -> dict:
-    """Core + enabled-plugin pipelines, each with their last 5 SFN runs."""
+    """Core + enabled-plugin pipelines, each with their data sources, Bedrock
+    model, and last 5 SFN runs.
+
+    Data sources and the Bedrock model come from S3 config (config/system.json
+    and config/data_sources/*.json), so the dashboard reflects what actually
+    powers each pipeline rather than a hardcoded step diagram.
+    """
+    sources_by_name = _load_data_sources()
+    bedrock = _load_bedrock_config()
+
+    def _sources_for(key: str) -> list:
+        return [sources_by_name[n] for n in PIPELINE_DATA_SOURCES.get(key, []) if n in sources_by_name]
+
     pipelines = [{
         "key": "core",
         "name": "Core Disease Surveillance",
-        "steps": ["Data Source", "Leader Detection", "Prediction", "Generation", "Delivery"],
+        "data_sources": _sources_for("core"),
+        "bedrock": bedrock,
         "state_machine": CORE_STATE_MACHINE,
         "recent_runs": _recent_runs(CORE_STATE_MACHINE),
     }]
@@ -212,12 +241,65 @@ def get_pipelines() -> dict:
         pipelines.append({
             "key": key,
             "name": stack_name.replace("HealthSignals-", ""),
-            "steps": ["Data Source", "Detection", "Generation", "Delivery"],
+            "data_sources": _sources_for(key),
+            "bedrock": bedrock,
             "state_machine": sm_name,
             "recent_runs": _recent_runs(sm_name) if sm_name else [],
         })
 
     return {"pipelines": pipelines}
+
+
+def _load_json_config(rel_key: str) -> Optional[dict]:
+    """Read a JSON config object from the data bucket, or None on any failure."""
+    if not CONFIG_BUCKET:
+        return None
+    try:
+        obj = s3.get_object(Bucket=CONFIG_BUCKET, Key=f"{CONFIG_PREFIX}{rel_key}")
+        return json.loads(obj["Body"].read().decode())
+    except Exception as e:  # NoSuchKey, access error, bad JSON — degrade gracefully
+        logger.warning(f"config read failed for {rel_key}: {e}")
+        return None
+
+
+def _load_data_sources() -> dict:
+    """Load every config/data_sources/*.json -> {source_name: {name, enabled, priority}}."""
+    result: dict = {}
+    if not CONFIG_BUCKET:
+        return result
+    try:
+        paginator = s3.get_paginator("list_objects_v2")
+        for page in paginator.paginate(Bucket=CONFIG_BUCKET, Prefix=f"{CONFIG_PREFIX}data_sources/"):
+            for obj in page.get("Contents", []):
+                key = obj["Key"]
+                if not key.endswith(".json"):
+                    continue
+                cfg = _load_json_config(key[len(CONFIG_PREFIX):])
+                if not cfg:
+                    continue
+                name = cfg.get("source_name")
+                if not name:
+                    continue
+                result[name] = {
+                    "source_name": name,
+                    "display_name": cfg.get("display_name", name),
+                    "enabled": bool(cfg.get("enabled", False)),
+                    "priority": cfg.get("priority", ""),
+                }
+    except Exception as e:
+        logger.warning(f"data_sources listing failed: {e}")
+    return result
+
+
+def _load_bedrock_config() -> dict:
+    """Extract the Bedrock model info from config/system.json for display."""
+    system = _load_json_config("system.json") or {}
+    bedrock = system.get("bedrock", {})
+    return {
+        "routine_model_id": bedrock.get("routine_model_id", ""),
+        "high_severity_model_id": bedrock.get("high_severity_model_id", ""),
+        "severity_threshold_for_upgrade": bedrock.get("severity_threshold_for_upgrade", []),
+    }
 
 
 # --- GET /runs?arn= ----------------------------------------------------------

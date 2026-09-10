@@ -93,12 +93,55 @@
     </div>`;
   }
 
-  function stepsRow(steps) {
-    return steps.map(s =>
-      `<div class="step-box text-center">
-        <div class="w-10 h-10 mx-auto rounded-full bg-cyan-100 text-cyan-800 flex items-center justify-center font-bold">${steps.indexOf(s) + 1}</div>
-        <div class="text-xs text-slate-600 mt-1 w-24">${s}</div>
-      </div>`).join("");
+  // Short label for a Bedrock inference-profile / model id, e.g.
+  // "us.anthropic.claude-sonnet-4-5-20250929-v1:0" -> "Claude Sonnet 4-5".
+  function modelLabel(id) {
+    if (!id) return "—";
+    const m = id.match(/claude-(sonnet|haiku|opus)-?([0-9-]*)/i);
+    if (m) {
+      const fam = m[1][0].toUpperCase() + m[1].slice(1);
+      const ver = (m[2] || "").replace(/-+$/, "").replace(/-/g, ".");
+      return `Claude ${fam}${ver ? " " + ver : ""}`;
+    }
+    return id;
+  }
+
+  function sourceChip(s) {
+    const on = s.enabled;
+    const cls = on ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                   : "bg-slate-100 text-slate-400 border-slate-200";
+    const dot = on ? "bg-emerald-500" : "bg-slate-300";
+    const pri = s.priority === "primary"
+      ? ' <span class="text-[10px] uppercase tracking-wide text-cyan-600">primary</span>' : "";
+    return `<span class="inline-flex items-center gap-1.5 border ${cls} rounded-full px-2.5 py-1 text-xs">
+      <span class="w-1.5 h-1.5 rounded-full ${dot}"></span>${escapeHtml(s.display_name)}${pri}</span>`;
+  }
+
+  // Config-driven panel replacing the old numbered step diagram: the pipeline's
+  // live data sources and the Bedrock model(s) it uses (read from S3 config).
+  function pipelineConfig(p) {
+    const sources = p.data_sources || [];
+    const chips = sources.length
+      ? `<div class="flex flex-wrap gap-2">${sources.map(sourceChip).join("")}</div>`
+      : `<div class="text-sm text-slate-400">No dedicated data sources.</div>`;
+    const b = p.bedrock || {};
+    const upgrade = (b.severity_threshold_for_upgrade || []).join(" / ");
+    const hiRow = b.high_severity_model_id
+      ? `<div class="text-xs text-slate-500 mt-1">High severity (${escapeHtml(upgrade || "HIGH/CRITICAL")}):
+           <span class="font-medium text-slate-700">${escapeHtml(modelLabel(b.high_severity_model_id))}</span></div>`
+      : "";
+    return `
+      <div class="grid md:grid-cols-2 gap-4">
+        <div>
+          <div class="text-xs font-semibold text-slate-500 uppercase mb-2">Data sources</div>
+          ${chips}
+        </div>
+        <div>
+          <div class="text-xs font-semibold text-slate-500 uppercase mb-2">Bedrock model</div>
+          <div class="text-sm text-slate-700 font-medium">${escapeHtml(modelLabel(b.routine_model_id))}</div>
+          ${hiRow}
+        </div>
+      </div>`;
   }
 
   function runRow(run, pipelineKey) {
@@ -131,7 +174,7 @@
     const data = await api("/pipelines");
     const core = data.pipelines.find(p => p.key === "core");
     if (core) {
-      document.getElementById("corePipelineSteps").innerHTML = stepsRow(core.steps);
+      document.getElementById("corePipelineSteps").innerHTML = pipelineConfig(core);
       renderRuns(document.getElementById("coreRuns"), core.recent_runs, "core");
     }
     // Plugins
@@ -149,7 +192,7 @@
           <h3 class="font-bold text-cyan-900">${p.name}</h3>
           <span>${statusPill(st.status || "deployed")}</span>
         </div>
-        <div class="flex flex-wrap gap-6 my-4">${stepsRow(p.steps)}</div>
+        <div class="my-4">${pipelineConfig(p)}</div>
         <h4 class="text-sm font-semibold text-slate-500 uppercase mb-2">Last 5 runs</h4>
         <div class="space-y-1" data-plugin-runs="${p.key}"></div>
       </div>`;

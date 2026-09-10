@@ -111,9 +111,79 @@ class TestPipelines:
         assert "drug_shortage" in keys
         assert "cdc_outbreak" not in keys       # stack absent
         assert "forecast_providers" not in keys  # stack absent
-        # core has the 5-step breakdown
+        # core exposes config-driven data sources + Bedrock model (not a step
+        # diagram). With no CONFIG_BUCKET set in the test env, these resolve to
+        # empty structures rather than reading S3.
         core = next(p for p in out["pipelines"] if p["key"] == "core")
-        assert core["steps"] == ["Data Source", "Leader Detection", "Prediction", "Generation", "Delivery"]
+        assert "steps" not in core
+        assert core["data_sources"] == []
+        assert core["bedrock"] == {
+            "routine_model_id": "",
+            "high_severity_model_id": "",
+            "severity_threshold_for_upgrade": [],
+        }
+
+    def test_pipeline_config_from_s3(self, handler):
+        """data_sources + bedrock come from S3 config when CONFIG_BUCKET is set."""
+        handler.CONFIG_BUCKET = "healthsignals-data-123-us-east-1"
+        handler.CONFIG_PREFIX = "config/"
+
+        # Only the core state machine matters here; no plugin stacks deployed.
+        class _CE(Exception):
+            pass
+        handler.cfn.exceptions.ClientError = _CE
+        handler.cfn.describe_stacks.side_effect = _CE("Stack does not exist")
+
+        # S3 list of data_sources/ -> two files.
+        paginator = MagicMock()
+        paginator.paginate.return_value = [{
+            "Contents": [
+                {"Key": "config/data_sources/delphi.json"},
+                {"Key": "config/data_sources/cdc_wastewater.json"},
+                {"Key": "config/data_sources/_notes.txt"},  # non-json ignored
+            ]
+        }]
+        handler.s3.get_paginator.return_value = paginator
+
+        bodies = {
+            "config/data_sources/delphi.json": {
+                "source_name": "delphi", "display_name": "CMU Delphi Epidata API",
+                "enabled": True, "priority": "primary",
+            },
+            "config/data_sources/cdc_wastewater.json": {
+                "source_name": "cdc_wastewater", "display_name": "CDC NWSS Wastewater",
+                "enabled": True, "priority": "supplemental",
+            },
+            "config/system.json": {
+                "bedrock": {
+                    "routine_model_id": "us.anthropic.claude-sonnet-4-5-x",
+                    "high_severity_model_id": "us.anthropic.claude-sonnet-5",
+                    "severity_threshold_for_upgrade": ["HIGH", "CRITICAL"],
+                }
+            },
+        }
+
+        def _get_object(Bucket, Key):
+            body = MagicMock()
+            body.read.return_value = json.dumps(bodies[Key]).encode()
+            return {"Body": body}
+        handler.s3.get_object.side_effect = _get_object
+
+        try:
+            with patch.object(handler, "_recent_runs", return_value=[]):
+                out = handler.get_pipelines()
+        finally:
+            handler.CONFIG_BUCKET = ""
+
+        core = next(p for p in out["pipelines"] if p["key"] == "core")
+        names = [s["source_name"] for s in core["data_sources"]]
+        # core maps to delphi + cdc_wastewater (the two we stubbed); order follows
+        # PIPELINE_DATA_SOURCES, and only present sources are included.
+        assert names == ["delphi", "cdc_wastewater"]
+        assert core["data_sources"][0]["priority"] == "primary"
+        assert core["bedrock"]["routine_model_id"] == "us.anthropic.claude-sonnet-4-5-x"
+        assert core["bedrock"]["high_severity_model_id"] == "us.anthropic.claude-sonnet-5"
+        assert core["bedrock"]["severity_threshold_for_upgrade"] == ["HIGH", "CRITICAL"]
 
     def test_recent_runs_maps_executions(self, handler):
         handler.sfn.get_paginator.return_value.paginate.return_value = [

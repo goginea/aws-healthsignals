@@ -137,6 +137,8 @@ class DashboardStack(Stack):
             environment={
                 "ALLOWED_ORIGIN": cf_origin,
                 "PIPELINE_RUNS_TABLE": "healthsignals-pipeline-runs",
+                "CONFIG_BUCKET": f"healthsignals-data-{self.account}-{self.region}",
+                "CONFIG_PREFIX": "config/",
                 "LOG_LEVEL": "INFO",
             },
         )
@@ -172,6 +174,22 @@ class DashboardStack(Stack):
                     f"arn:aws:dynamodb:{self.region}:{self.account}:table/healthsignals-pipeline-runs",
                     f"arn:aws:dynamodb:{self.region}:{self.account}:table/healthsignals-pipeline-runs/index/*",
                 ],
+            )
+        )
+        # Read-only access to the config prefix of the data bucket, so the API
+        # can surface each pipeline's live data sources + Bedrock model.
+        _data_bucket = f"healthsignals-data-{self.account}-{self.region}"
+        self.api_fn.add_to_role_policy(
+            iam.PolicyStatement(
+                actions=["s3:GetObject"],
+                resources=[f"arn:aws:s3:::{_data_bucket}/config/*"],
+            )
+        )
+        self.api_fn.add_to_role_policy(
+            iam.PolicyStatement(
+                actions=["s3:ListBucket"],
+                resources=[f"arn:aws:s3:::{_data_bucket}"],
+                conditions={"StringLike": {"s3:prefix": ["config/*"]}},
             )
         )
 
