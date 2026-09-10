@@ -190,12 +190,13 @@
         </div>
         <div class="bg-white rounded-lg shadow p-5 mt-4">
           <div class="text-xs font-semibold text-slate-500 uppercase mb-2">Email that was sent</div>
-          <div class="brief text-slate-700 border-l-4 border-cyan-200 pl-4">${escapeHtml(r.email || "(none)")}</div>
+          <div class="brief text-slate-700 border-l-4 border-cyan-200 pl-4">${r.email ? renderMarkdown(r.email) : "(none)"}</div>
         </div>
+        ${briefDiffersFromEmail(r) ? `
         <div class="bg-white rounded-lg shadow p-5 mt-4">
           <div class="text-xs font-semibold text-slate-500 uppercase mb-2">Full situation brief</div>
-          <div class="brief text-slate-700">${escapeHtml(r.brief || "(none)")}</div>
-        </div>`;
+          <div class="brief text-slate-700">${renderMarkdown(r.brief)}</div>
+        </div>` : ""}`;
     } catch (e) {
       el.innerHTML = `<div class="text-sm text-rose-600">Failed to load run: ${e.message}</div>`;
     }
@@ -203,6 +204,91 @@
 
   function escapeHtml(s) {
     return String(s).replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+  }
+
+  // Render a SAFE subset of Markdown to HTML. Bedrock output is untrusted, so
+  // we escape ALL HTML first, then apply formatting on the escaped text only.
+  // No raw HTML from the model can survive this, so it cannot inject markup.
+  // Supported: # headings, **bold**, *italic*, `code`, [links](url),
+  // - / * bullet lists, 1. ordered lists, > blockquotes, | GFM tables |,
+  // --- horizontal rules, blank-line paragraphs, single-newline line breaks.
+  function renderMarkdown(src) {
+    const escaped = escapeHtml(src == null ? "" : src);
+
+    // Inline formatting, applied to already-escaped text only.
+    // Links: only http(s)/mailto schemes are allowed; anything else (e.g.
+    // javascript:, data:) is left as plain text so it cannot execute.
+    const inline = (t) => t
+      .replace(/`([^`]+)`/g, '<code class="bg-slate-100 px-1 rounded text-sm">$1</code>')
+      .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+      .replace(/\*([^*]+)\*/g, "<em>$1</em>")
+      .replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (m, text, url) => {
+        // url is already HTML-escaped; validate the scheme before trusting it.
+        const safe = /^(https?:|mailto:)/i.test(url) || /^[/#]/.test(url);
+        return safe
+          ? `<a href="${url}" target="_blank" rel="noopener noreferrer" class="text-cyan-700 underline">${text}</a>`
+          : m;
+      });
+
+    const splitRow = (row) => row.replace(/^\s*\|/, "").replace(/\|\s*$/, "").split("|").map((c) => c.trim());
+
+    // Split into blocks on blank lines so lists and paragraphs are separable.
+    const blocks = escaped.replace(/\r\n/g, "\n").split(/\n{2,}/);
+    const html = blocks.map((block) => {
+      const lines = block.split("\n");
+      const nonEmpty = lines.filter((l) => l.trim() !== "");
+
+      // Horizontal rule: a block that is only dashes/asterisks/underscores.
+      if (/^\s*([-*_])\1{2,}\s*$/.test(block)) {
+        return "<hr>";
+      }
+      // Heading: a block that is a single # .. ###### line.
+      const h = block.match(/^(#{1,6})\s+(.*)$/);
+      if (h && lines.length === 1) {
+        const level = Math.min(h[1].length, 6);
+        const size = level <= 2 ? "text-base font-bold" : "text-sm font-semibold";
+        return `<h${level} class="${size} text-slate-800 mt-1">${inline(h[2])}</h${level}>`;
+      }
+      // GFM table: header row, a |---|---| separator, then body rows.
+      if (nonEmpty.length >= 2 && /\|/.test(nonEmpty[0]) && /^\s*\|?[\s:|-]+\|?\s*$/.test(nonEmpty[1]) && /-/.test(nonEmpty[1])) {
+        const head = splitRow(nonEmpty[0]).map((c) => `<th class="border border-slate-200 px-2 py-1 text-left font-semibold">${inline(c)}</th>`).join("");
+        const body = nonEmpty.slice(2).map((row) =>
+          `<tr>${splitRow(row).map((c) => `<td class="border border-slate-200 px-2 py-1">${inline(c)}</td>`).join("")}</tr>`
+        ).join("");
+        return `<table class="border-collapse text-sm my-2"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+      }
+      // Ordered list: every non-empty line starts with "N." or "N)".
+      if (nonEmpty.length > 0 && nonEmpty.every((l) => /^\s*\d+[.)]\s+/.test(l))) {
+        const items = nonEmpty.map((l) => `<li>${inline(l.replace(/^\s*\d+[.)]\s+/, ""))}</li>`).join("");
+        return `<ol class="list-decimal pl-5 space-y-1">${items}</ol>`;
+      }
+      // Bullet list: every non-empty line starts with - or * (optional indent).
+      if (nonEmpty.length > 0 && nonEmpty.every((l) => /^\s*[-*]\s+/.test(l))) {
+        const items = nonEmpty.map((l) => `<li>${inline(l.replace(/^\s*[-*]\s+/, ""))}</li>`).join("");
+        return `<ul class="list-disc pl-5 space-y-1">${items}</ul>`;
+      }
+      // Blockquote: every non-empty line starts with ">". Note the text is
+      // already HTML-escaped at this point, so ">" appears as "&gt;".
+      if (nonEmpty.length > 0 && nonEmpty.every((l) => /^\s*&gt;\s?/.test(l))) {
+        const inner = nonEmpty.map((l) => inline(l.replace(/^\s*&gt;\s?/, ""))).join("<br>");
+        return `<blockquote class="border-l-4 border-slate-300 pl-3 text-slate-600 italic">${inner}</blockquote>`;
+      }
+      // Paragraph: join wrapped lines with <br>.
+      return `<p>${lines.map(inline).join("<br>")}</p>`;
+    }).join("");
+    return html;
+  }
+
+  // Show the "Full situation brief" panel only when the brief carries content
+  // distinct from the email. Core runs draft a separate communication email, so
+  // brief != email; shortage/outbreak plugins derive the email from the brief,
+  // so they are identical and the second panel would be pure duplication.
+  function briefDiffersFromEmail(r) {
+    const brief = (r.brief || "").trim();
+    if (!brief) return false;
+    const email = (r.email || "").trim();
+    const norm = (s) => s.replace(/\s+/g, " ");
+    return norm(brief) !== norm(email);
   }
 
   async function refreshAll() {

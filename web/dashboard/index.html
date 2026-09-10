@@ -8,7 +8,14 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <style>
   body { scroll-behavior: smooth; }
-  .brief { font-size: 0.85rem; line-height: 1.5; white-space: pre-wrap; }
+  .brief { font-size: 0.85rem; line-height: 1.5; }
+  .brief p { margin: 0 0 0.6rem; }
+  .brief h1, .brief h2, .brief h3, .brief h4 { margin: 0.8rem 0 0.4rem; }
+  .brief ul, .brief ol { margin: 0 0 0.6rem; }
+  .brief hr { border: 0; border-top: 1px solid #e2e8f0; margin: 0.8rem 0; }
+  .brief a { word-break: break-word; }
+  .brief blockquote { margin: 0 0 0.6rem; }
+  .brief table { display: block; overflow-x: auto; max-width: 100%; }
   .pill { font-size: 0.7rem; font-weight: 700; padding: 0.1rem 0.5rem; border-radius: 9999px; }
   .step-box { position: relative; }
   .step-box:not(:last-child)::after { content:"→"; position:absolute; right:-0.9rem; top:50%; transform:translateY(-50%); color:#94a3b8; }
@@ -79,7 +86,7 @@
     <!-- SELECTED RUN DETAIL -->
     <section id="run-detail">
       <h2 class="text-2xl font-bold text-cyan-900 border-b-2 border-cyan-200 pb-2">Run Detail</h2>
-      <p class="text-sm text-slate-500 mt-2">Select any run above to inspect its Bedrock classification, the email that was sent, and the full situation brief.</p>
+      <p class="text-sm text-slate-500 mt-2">Select any run above to inspect its Bedrock classification and the email that was sent. The full situation brief is shown separately when it differs from the email.</p>
       <div id="runDetail" class="mt-4 text-slate-400 text-sm">No run selected.</div>
     </section>
 
@@ -93,7 +100,7 @@
 <!-- Frontend config (config.js) is generated and uploaded by the CDK
      BucketDeployment at deploy time; the committed file holds empty defaults. -->
 <script src="config.js"></script>
-<script src="static-sections.js"></script>
-<script src="app.js"></script>
+<script src="static-sections.js?v=3"></script>
+<script src="app.js?v=3"></script>
 </body>
 </html>
